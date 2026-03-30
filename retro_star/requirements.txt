@@ -1,0 +1,34 @@
+# RetroTMP 逆合成预测平台依赖包
+
+# Web框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# 数据验证
+pydantic>=2.5.0
+
+# 数据库
+sqlite3
+
+# 化学信息学
+rdkit>=2023.9.1
+networkx>=3.2.1
+matplotlib>=3.8.0
+
+# 工具包
+typing-extensions>=4.8.0
+python-dotenv>=1.0.0
+
+# 可选：邮件发送
+# aiosmtplib>=3.0.0
+# email-validator>=2.1.0
+
+# 可选：速率限制
+# slowapi>=0.1.9
+
+# 开发依赖（可选）
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.10.0
+# flake8>=6.1.0

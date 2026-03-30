@@ -3,9 +3,11 @@ from queue import Queue
 import logging
 import networkx as nx
 from graphviz import Digraph
-from retro_star.alg.mol_node import MolNode
-from retro_star.alg.reaction_node import ReactionNode
-from retro_star.alg.syn_route import SynRoute
+import sys
+sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
+from alg.mol_node import MolNode
+from alg.reaction_node import ReactionNode
+from alg.syn_route import SynRoute
 
 
 class MolTree:
@@ -69,8 +71,14 @@ class MolTree:
         assert mol_node.open
         ancestors = mol_node.get_ancestors()
         for i in range(len(costs)):
-            self._add_reaction_and_mol_nodes(costs[i], reactant_lists[i],
-                                             mol_node, templates[i], ancestors)
+            try:
+                self._add_reaction_and_mol_nodes(costs[i], reactant_lists[i],
+                                                mol_node, templates[i], ancestors)
+                
+            except Exception as e:
+                logging.info(f"Error adding reaction and mol nodes: {e}")
+                logging.info(f"Reactants: {reactant_lists[i]}, Cost: {costs[i]}, Template: {templates[i]}")
+                continue
 
         if len(mol_node.children) == 0:      # No valid expansion results
             assert mol_node.init_values(no_child=True) == np.inf

@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RetroTMP 逆合成预测平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --dark-bg: #1a1a2e;
+            --card-bg: #16213e;
+            --text-light: #ecf0f1;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+        
+        .main-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin: 30px auto;
+            padding: 40px;
+            max-width: 1400px;
+        }
+        
+        /* 顶部标题区域 */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 3px solid var(--secondary-color);
+            position: relative;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 4px;
+            background: linear-gradient(90deg, var(--secondary-color), var(--accent-color));
+            border-radius: 2px;
+        }
+        
+        .header h1 {
+            color: var(--primary-color);
+            font-weight: 700;
+            margin-bottom: 15px;
+            font-size: 2.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .header h1 i {
+            color: var(--secondary-color);
+            font-size: 2.2rem;
+        }
+        
+        .header p {
+            color: #7f8c8d;
+            font-size: 1.2rem;
+            margin-bottom: 0;
+        }
+        
+        .hero-image {
+            width: 100%;
+            max-width: 600px;
+            height: 200px;
+            background: linear-gradient(45deg, #f8f9fa, #e9ecef);
+            border-radius: 15px;
+            margin: 20px auto 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed #dee2e6;
+        }
+        
+        /* 参数设置区域 */
+        .param-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border-left: 5px solid var(--secondary-color);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+        }
+        
+        .param-section h4 {
+            color: var(--primary-color);
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+        
+        .param-section h4 i {
+            color: var(--secondary-color);
+            font-size: 1.5rem;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-label {
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 8px;
+        }
+        
+        .form-control, .form-select {
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s ease;
+            padding: 12px 15px;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            border-color: var(--secondary-color);
+            box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+        }
+        
+        .range-value {
+            display: inline-block;
+            background: var(--secondary-color);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        /* 分子预览区域 */
+        .molecule-viewer {
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed #dee2e6;
+            transition: all 0.3s ease;
+        }
+        
+        .molecule-viewer.has-content {
+            border-style: solid;
+            border-color: var(--success-color);
+            background: linear-gradient(135deg, #d4edda, #c3e6cb);
+        }
+        
+        .molecule-viewer img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        /* 按钮样式 */
+        .btn-primary {
+            background: linear-gradient(135deg, var(--secondary-color), #2980b9);
+            border: none;
+            border-radius: 50px;
+            padding: 15px 40px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(52, 152, 219, 0.4);
+            background: linear-gradient(135deg, #2980b9, var(--secondary-color));
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d, #5a6268);
+            border: none;
+            border-radius: 50px;
+            padding: 12px 30px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-secondary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
+        }
+        
+        /* 加载动画 */
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 1.5rem;
+        }
+        
+        .spinner-border {
+            width: 4rem;
+            height: 4rem;
+            margin-right: 20px;
+        }
+        
+        /* 结果卡片 */
+        .result-card {
+            display: none;
+            margin-top: 30px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .result-header {
+            background: linear-gradient(135deg, var(--primary-color), #34495e);
+            color: white;
+            padding: 25px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .result-header h5 {
+            margin: 0;
+            font-size: 1.3rem;
+        }
+        
+        /* 状态指示器 */
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+        
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-running {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .status-completed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        /* 步骤卡片 */
+        .step-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            border-left: 5px solid var(--secondary-color);
+        }
+        
+        .step-number {
+            background: linear-gradient(135deg, var(--secondary-color), #2980b9);
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-right: 15px;
+        }
+        
+        /* 参数显示 */
+        .param-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .param-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid var(--secondary-color);
+        }
+        
+        .param-item strong {
+            color: var(--primary-color);
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .main-container {
+                margin: 15px;
+                padding: 25px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .param-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn-primary {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+        }
+        
+        /* 工具提示 */
+        .tooltip-inner {
+            background-color: var(--primary-color);
+            border-radius: 8px;
+            padding: 10px 15px;
+            font-size: 0.9rem;
+            max-width: 300px;
+        }
+        
+        /* 进度条 */
+        .progress {
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .progress-bar {
+            background: linear-gradient(90deg, var(--secondary-color), var(--success-color));
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="main-container">
+            <!-- 顶部标题区域 -->
+            <div class="header">
+                <h1>
+                    <i class="fas fa-atom"></i>
+                    RetroTMP 逆合成预测平台
+                </h1>
+                <p>基于化学语义分割的智能分子合成路径规划</p>
+                <div class="hero-image">
+                    <div>
+                        <i class="fas fa-flask" style="font-size: 4rem; color: var(--secondary-color); margin-bottom: 15px;"></i>
+                        <p style="color: #6c757d; margin: 0; font-size: 1.1rem;">
+                            <strong>智能化学合成</strong> · <strong>精准路径规划</strong> · <strong>高效计算</strong>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分子输入区域 -->
+            <div class="param-section">
+                <h4><i class="fas fa-molecule"></i> 分子输入</h4>
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="form-group">
+                            <label for="smilesInput" class="form-label">
+                                <i class="fas fa-edit"></i> 目标分子SMILES
+                            </label>
+                            <textarea 
+                                class="form-control" 
+                                id="smilesInput" 
+                                rows="4" 
+                                placeholder="请输入要预测合成路径的目标分子SMILES字符串，例如: CCCC[C@@H](C(=O)N1CCC[C@H]1C(=O)O)[C@@H](F)C(=O)OC"
+                            ></textarea>
+                            <div class="form-text">
+                                <i class="fas fa-info-circle"></i> 
+                                SMILES (Simplified Molecular Input Line Entry System) 是一种用ASCII字符串表示分子结构的标准
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">
+                            <i class="fas fa-eye"></i> 分子预览
+                        </label>
+                        <div class="molecule-viewer" id="molPreview">
+                            <i class="fas fa-image" style="font-size: 3rem; color: #bdc3c7;"></i>
+                            <p style="margin-top: 15px; color: #7f8c7d;">输入SMILES后自动渲染</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 逆合成参数设置 -->
+            <div class="param-section">
+                <h4><i class="fas fa-cogs"></i> 逆合成参数设置</h4>
+                
+                <div class="row">
+                    <!-- 模型选择 -->
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="modelType" class="form-label">
+                                <i class="fas fa-brain"></i> 模型选择
+                            </label>
+                            <select class="form-select" id="modelType" data-bs-toggle="tooltip" 
+                                    title="选择逆合成预测使用的模型类型：模板法基于已知反应模板，深度学习方法基于神经网络">
+                                <option value="template">模板法</option>
+                                <option value="deep_learning" selected>深度学习方法</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 化学语义分割 -->
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="useCSS" class="form-label">
+                                <i class="fas fa-cut"></i> 化学语义分割
+                            </label>
+                            <select class="form-select" id="useCSS" onchange="toggleCSSParams()">
+                                <option value="true" selected>启用</option>
+                                <option value="false">关闭</option>
+                            </select>
+                            <div class="form-text">启用后可提高分割精度，但会增加计算时间</div>
+                        </div>
+                    </div>
+
+                    <!-- 单步拓展topk -->
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="expansionTopk" class="form-label">
+                                <i class="fas fa-expand-arrows-alt"></i> 单步拓展Top-K
+                            </label>
+                            <input type="range" class="form-range" id="expansionTopk" min="1" max="10" value="8" 
+                                   oninput="updateRangeValue('expansionTopk')" data-bs-toggle="tooltip"
+                                   title="每次扩展时保留的候选反应数，数值越大搜索空间越大">
+                            <span class="range-value" id="expansionTopkValue">8</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <!-- 最大迭代次数 -->
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="maxIterations" class="form-label">
+                                <i class="fas fa-redo"></i> 最大迭代次数
+                            </label>
+                            <input type="range" class="form-range" id="maxIterations" min="30" max="1000" value="100" 
+                                   oninput="updateRangeValue('maxIterations')" data-bs-toggle="tooltip"
+                                   title="搜索算法的最大迭代次数，影响搜索深度和广度">
+                            <span class="range-value" id="maxIterationsValue">100</span>
+                        </div>
+                    </div>
+
+                    <!-- 最大深度 -->
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="maxDepth" class="form-label">
+                                <i class="fas fa-layer-group"></i> 最大深度
+                            </label>
+                            <input type="range" class="form-range" id="maxDepth" min="2" max="100" value="10" 
+                                   oninput="updateRangeValue('maxDepth')" data-bs-toggle="tooltip"
+                                   title="合成路径的最大深度，即最多反应步骤数">
+                            <span class="range-value" id="maxDepthValue">10</span>
+                        </div>
+                    </div>
+
+                    <!-- 最大构建块数目 -->
+                    <div class="col-md-4">
+                        <div class="form-group">
+                            <label for="maxBuildingBlocks" class="form-label">
+                                <i class="fas fa-cubes"></i> 最大构建块数目
+                            </label>
+                            <input type="range" class="form-range" id="maxBuildingBlocks" min="1" max="100" value="10" 
+                                   oninput="updateRangeValue('maxBuildingBlocks')" data-bs-toggle="tooltip"
+                                   title="最终合成路径中允许的最大构建块数量">
+                            <span class="range-value" id="maxBuildingBlocksValue">10</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 化学语义分割参数（仅在启用时显示） -->
+                <div id="cssParams" style="display: block;">
+                    <hr style="margin: 30px 0;">
+                    <h5 style="color: var(--primary-color); margin-bottom: 20px;">
+                        <i class="fas fa-sliders-h"></i> 化学语义分割参数
+                    </h5>
+                    
+                    <div class="row">
+                        <!-- 主要化学语义分割半径 -->
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="primaryCSSRadius" class="form-label">
+                                    <i class="fas fa-circle"></i> 主要化学语义分割半径
+                                </label>
+                                <input type="range" class="form-range" id="primaryCSSRadius" min="1" max="15" value="9" 
+                                       oninput="updateRangeValue('primaryCSSRadius')" data-bs-toggle="tooltip"
+                                       title="主要分割区域的半径，影响分割粒度">
+                                <span class="range-value" id="primaryCSSRadiusValue">9</span>
+                            </div>
+                        </div>
+
+                        <!-- 次要化学语义分割半径 -->
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="secondaryCSSRadius" class="form-label">
+                                    <i class="fas fa-dot-circle"></i> 次要化学语义分割半径
+                                </label>
+                                <input type="range" class="form-range" id="secondaryCSSRadius" min="1" max="15" value="4" 
+                                       oninput="updateRangeValue('secondaryCSSRadius')" data-bs-toggle="tooltip"
+                                       title="次要分割区域的半径，用于精细调整">
+                                <span class="range-value" id="secondaryCSSRadiusValue">4</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 个性化参数设置 -->
+            <div class="param-section">
+                <h4><i class="fas fa-user-cog"></i> 个性化参数设置</h4>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="resultEmail" class="form-label">
+                                <i class="fas fa-envelope"></i> 结果邮箱
+                            </label>
+                            <input type="email" class="form-control" id="resultEmail" 
+                                   value="2010307209@stu.pku.edu.cn" placeholder="用于接收计算结果的邮箱地址">
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="userName" class="form-label">
+                                <i class="fas fa-user"></i> 姓名
+                            </label>
+                            <input type="text" class="form-control" id="userName" value="test" 
+                                   placeholder="您的姓名或昵称">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="userId" class="form-label">
+                                <i class="fas fa-id-card"></i> 编号
+                            </label>
+                            <input type="text" class="form-control" id="userId" value="测试案例" 
+                                   placeholder="用户编号或标识">
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="remarks" class="form-label">
+                                <i class="fas fa-sticky-note"></i> 备注
+                            </label>
+                            <input type="text" class="form-control" id="remarks" value="无备注" 
+                                   placeholder="任务备注信息">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 提交按钮 -->
+            <div class="text-center">
+                <button class="btn btn-primary btn-lg" onclick="submitTask()" id="submitBtn">
+                    <i class="fas fa-rocket"></i> 
+                    提交逆合成预测任务
+                </button>
+                <div class="form-text mt-3">
+                    <i class="fas fa-info-circle"></i> 
+                    任务提交后将进入计算队列，您可以通过任务ID查询进度
+                </div>
+            </div>
+
+            <!-- 任务状态显示区域 -->
+            <div class="result-card" id="taskStatusCard">
+                <div class="result-header">
+                    <h5><i class="fas fa-tasks"></i> 任务状态</h5>
+                    <span class="status-badge" id="taskStatus">等待提交</span>
+                </div>
+                <div class="p-4">
+                    <div id="taskStatusContent">
+                        <!-- 动态加载任务状态 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载动画 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="text-center">
+            <div class="spinner-border" role="status"></div>
+            <div class="mt-4">正在提交任务...</div>
+            <div class="mt-2" style="font-size: 1rem; opacity: 0.8;">请稍候</div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 全局变量
+        let currentTaskId = null;
+        let statusCheckInterval = null;
+
+        // 初始化工具提示
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl)
+        });
+
+        // 更新滑块值显示
+        function updateRangeValue(id) {
+            const slider = document.getElementById(id);
+            const valueSpan = document.getElementById(id + 'Value');
+            valueSpan.textContent = slider.value;
+        }
+
+        // 切换化学语义分割参数显示
+        function toggleCSSParams() {
+            const useCSS = document.getElementById('useCSS').value;
+            const cssParams = document.getElementById('cssParams');
+            
+            if (useCSS === 'true') {
+                cssParams.style.display = 'block';
+            } else {
+                cssParams.style.display = 'none';
+            }
+        }
+
+        // SMILES输入实时预览
+        document.getElementById('smilesInput').addEventListener('input', debounce(async function() {
+            const smiles = this.value.trim();
+            const preview = document.getElementById('molPreview');
+            
+            if (!smiles || smiles.length < 5) {
+                preview.innerHTML = `
+                    <i class="fas fa-image" style="font-size: 3rem; color: #bdc3c7;"></i>
+                    <p style="margin-top: 15px; color: #7f8c7d;">输入SMILES后自动渲染</p>
+                `;
+                preview.classList.remove('has-content');
+                return;
+            }
+
+            // 显示加载状态
+            preview.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status" style="width: 2rem; height: 2rem;"></div>
+                    <p style="margin-top: 15px; color: #7f8c7d;">正在生成分子结构...</p>
+                </div>
+            `;
+
+            try {
+                // 这里可以添加实际的分子预览生成逻辑
+                // 目前只是简单显示SMILES字符串
+                await new Promise(resolve => setTimeout(resolve, 500)); // 模拟延迟
+                
+                preview.innerHTML = `
+                    <div style="padding: 15px; background: white; border-radius: 10px;">
+                        <i class="fas fa-check-circle" style="color: var(--success-color); font-size: 2.5rem; margin-bottom: 10px;"></i>
+                        <p style="margin: 0; font-size: 0.85rem; word-break: break-all; color: #495057;">
+                            ${smiles}
+                        </p>
+                        <p style="color: var(--success-color); font-size: 0.8rem; margin-top: 10px; margin-bottom: 0;">
+                            <i class="fas fa-check"></i> 已识别分子结构
+                        </p>
+                    </div>
+                `;
+                preview.classList.add('has-content');
+                
+            } catch (error) {
+                preview.innerHTML = `
+                    <div style="padding: 15px; background: #f8d7da; border-radius: 10px; border: 1px solid #dc3545;">
+                        <i class="fas fa-times-circle" style="color: #dc3545; font-size: 2rem;"></i>
+                        <p style="margin-top: 10px; font-size: 0.85rem; color: #721c24;">
+                            <strong>错误:</strong> 预览服务连接失败
+                        </p>
+                    </div>
+                `;
+                preview.classList.remove('has-content');
+            }
+        }, 500));
+
+        // 提交任务
+        async function submitTask() {
+            const smiles = document.getElementById('smilesInput').value.trim();
+            
+            if (!smiles || smiles.length < 5) {
+                alert('请输入有效的SMILES字符串！');
+                return;
+            }
+
+            // 显示加载动画
+            document.getElementById('loadingOverlay').style.display = 'flex';
+
+            const requestData = {
+                smiles: smiles,
+                model_type: document.getElementById('modelType').value,
+                use_chemical_semantic_segmentation: document.getElementById('useCSS').value === 'true',
+                expansion_topk: parseInt(document.getElementById('expansionTopk').value),
+                max_iterations: parseInt(document.getElementById('maxIterations').value),
+                max_depth: parseInt(document.getElementById('maxDepth').value),
+                max_building_blocks: parseInt(document.getElementById('maxBuildingBlocks').value),
+                primary_css_radius: parseInt(document.getElementById('primaryCSSRadius').value),
+                secondary_css_radius: parseInt(document.getElementById('secondaryCSSRadius').value),
+                result_email: document.getElementById('resultEmail').value,
+                user_name: document.getElementById('userName').value,
+                user_id: document.getElementById('userId').value,
+                remarks: document.getElementById('remarks').value
+            };
+
+            try {
+                const response = await fetch('/api/submit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const result = await response.json();
+                
+                document.getElementById('loadingOverlay').style.display = 'none';
+                
+                if (response.ok && result.success) {
+                    currentTaskId = result.task_id;
+                    
+                    // 显示任务状态卡片
+                    document.getElementById('taskStatusCard').style.display = 'block';
+                    updateTaskStatus('pending', '任务已提交，等待计算...');
+                    
+                    // 开始定期检查任务状态
+                    startStatusCheck();
+                    
+                    alert('任务提交成功！\n任务ID: ' + result.task_id + '\n\n您可以通过此ID查询任务进度。');
+                } else {
+                    throw new Error(result.detail || result.message || '任务提交失败');
+                }
+                
+            } catch (error) {
+                document.getElementById('loadingOverlay').style.display = 'none';
+                alert('任务提交失败: ' + error.message);
+            }
+        }
+
+        // 开始定期检查任务状态
+        function startStatusCheck() {
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            
+            statusCheckInterval = setInterval(async () => {
+                if (!currentTaskId) return;
+                
+                try {
+                    const response = await fetch(`/api/status/${currentTaskId}`);
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        updateTaskStatus(result.status, result);
+                        
+                        // 如果任务已完成或失败，停止检查
+                        if (result.status === 'completed' || result.status === 'failed') {
+                            clearInterval(statusCheckInterval);
+                        }
+                    }
+                } catch (error) {
+                    console.error('查询任务状态失败:', error);
+                }
+            }, 5000); // 每5秒检查一次
+        }
+
+        // 更新任务状态显示
+        function updateTaskStatus(status, data = null) {
+            const statusBadge = document.getElementById('taskStatus');
+            const statusContent = document.getElementById('taskStatusContent');
+            
+            // 更新状态徽章
+            statusBadge.className = `status-badge status-${status}`;
+            
+            const statusText = {
+                'pending': '等待计算',
+                'running': '计算中',
+                'completed': '已完成',
+                'failed': '失败'
+            };
+            
+            statusBadge.textContent = statusText[status] || status;
+            
+            // 更新状态内容
+            if (data && typeof data === 'object') {
+                let html = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-info-circle"></i> 任务信息</h6>
+                            <div class="param-grid">
+                                <div class="param-item">
+                                    <strong>任务ID:</strong>
+                                    <span>${data.task_id}</span>
+                                </div>
+                                <div class="param-item">
+                                    <strong>创建时间:</strong>
+                                    <span>${new Date(data.created_at).toLocaleString()}</span>
+                                </div>
+                `;
+                
+                if (data.started_at) {
+                    html += `
+                        <div class="param-item">
+                            <strong>开始时间:</strong>
+                            <span>${new Date(data.started_at).toLocaleString()}</span>
+                        </div>
+                    `;
+                }
+                
+                if (data.completed_at) {
+                    html += `
+                        <div class="param-item">
+                            <strong>完成时间:</strong>
+                            <span>${new Date(data.completed_at).toLocaleString()}</span>
+                        </div>
+                    `;
+                }
+                
+                if (data.error_message) {
+                    html += `
+                        <div class="param-item">
+                            <strong>错误信息:</strong>
+                            <span style="color: var(--accent-color);">${data.error_message}</span>
+                        </div>
+                    `;
+                }
+                
+                html += `
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-sliders-h"></i> 计算参数</h6>
+                            <div class="param-grid">
+                `;
+                
+                if (data.parameters) {
+                    const params = data.parameters;
+                    const paramDisplay = {
+                        'smiles': 'SMILES',
+                        'model_type': '模型类型',
+                        'use_chemical_semantic_segmentation': '化学语义分割',
+                        'expansion_topk': 'Top-K',
+                        'max_iterations': '最大迭代',
+                        'max_depth': '最大深度',
+                        'max_building_blocks': '最大构建块',
+                        'result_email': '结果邮箱',
+                        'user_name': '用户姓名',
+                        'user_id': '用户编号',
+                        'remarks': '备注'
+                    };
+                    
+                    for (const [key, label] of Object.entries(paramDisplay)) {
+                        if (params[key] !== undefined) {
+                            let value = params[key];
+                            if (typeof value === 'boolean') {
+                                value = value ? '是' : '否';
+                            }
+                            html += `
+                                <div class="param-item">
+                                    <strong>${label}:</strong>
+                                    <span>${value}</span>
+                                </div>
+                            `;
+                        }
+                    }
+                }
+                
+                html += `
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // 添加结果下载按钮（仅当任务完成时）
+                if (status === 'completed') {
+                    html += `
+                        <hr style="margin: 25px 0;">
+                        <div class="text-center">
+                            <h6><i class="fas fa-download"></i> 下载结果</h6>
+                            <button class="btn btn-primary" onclick="downloadResult('json')">
+                                <i class="fas fa-file-code"></i> 下载JSON文件
+                            </button>
+                        </div>
+                    `;
+                }
+                
+                statusContent.innerHTML = html;
+            } else {
+                statusContent.innerHTML = `<p class="text-muted">${data || '等待任务更新...'}</p>`;
+            }
+        }
+
+        // 下载结果
+        async function downloadResult(fileType) {
+            if (!currentTaskId) {
+                alert('没有可下载的结果');
+                return;
+            }
+            
+            const link = document.createElement('a');
+            link.href = `/api/download/${currentTaskId}?file_type=${fileType}`;
+            link.download = `retrosynthesis_${currentTaskId}.${fileType}`;
+            link.click();
+        }
+
+        // 防抖函数
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // 页面加载完成后的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化所有滑块的显示值
+            const rangeInputs = ['expansionTopk', 'maxIterations', 'maxDepth', 'maxBuildingBlocks', 
+                               'primaryCSSRadius', 'secondaryCSSRadius'];
+            rangeInputs.forEach(id => updateRangeValue(id));
+            
+            console.log('RetroTMP 逆合成预测平台已加载完成');
+        });
+    </script>
+</body>
+</html>

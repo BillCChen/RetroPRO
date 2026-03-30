@@ -96,3 +96,11 @@ class SynRoute:
                 s += self.serialize_reaction(i)
 
         return s
+    def return_builder(self):
+        s = self.serialize_reaction(0)
+        for i in range(1, len(self.mols)):
+            if self.children[i] is not None:
+                s += '|'
+                s += self.serialize_reaction(i)
+
+        return s

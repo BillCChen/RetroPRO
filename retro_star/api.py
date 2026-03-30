@@ -1,10 +1,11 @@
 import torch
 import logging
 import time
-from retro_star.common import prepare_starting_molecules, prepare_mlp, \
-    prepare_molstar_planner, smiles_to_fp
-from retro_star.model import ValueMLP
-from retro_star.utils import setup_logger
+from common.prepare_utils import prepare_starting_molecules, prepare_mlp,prepare_r_smiles, \
+    prepare_molstar_planner
+from common.smiles_to_fp import smiles_to_fp, batch_smiles_to_fp
+from model import ValueMLP
+from utils import setup_logger
 
 import os
 dirpath = os.path.dirname(os.path.abspath(__file__))
@@ -16,20 +17,38 @@ class RSPlanner:
                  iterations=500,
                  use_value_fn=False,
                  starting_molecules=dirpath+'/dataset/origin_dict.csv',
+                 one_step_type = "mlp",
+                 CCS=True,
+                 radius=9,
                  mlp_templates=dirpath+'/one_step_model/template_rules_1.dat',
                  mlp_model_dump=dirpath+'/one_step_model/saved_rollout_state_1_2048.ckpt',
                  save_folder=dirpath+'/saved_models',
                  value_model='best_epoch_final_4.pt',
                  fp_dim=2048,
                  viz=False,
-                 viz_dir='viz'):
+                 viz_dir='viz',
+                 starting_mols=None):
 
         setup_logger()
         device = torch.device('cuda:%d' % gpu if gpu >= 0 else 'cpu')
-        starting_mols = prepare_starting_molecules(starting_molecules)
-
-        one_step = prepare_mlp(mlp_templates, mlp_model_dump)
-
+        if not starting_mols:
+            starting_mols = prepare_starting_molecules(starting_molecules)
+        if one_step_type == "mlp":
+            one_step = prepare_mlp(mlp_templates, mlp_model_dump)
+        if one_step_type == "deep_learning":
+            retro_model_path = 'one_step_model/USPTO_full_PtoR.pt'
+            retro_topk = 3
+            forward_model_path = 'one_step_model/USPTO-MIT_RtoP_mixed.pt'
+            forward_topk = 1
+            CSS = CCS
+            import ast
+            if radius < 11:
+                RD_list = ast.literal_eval(f"[({radius},0)]")
+            else:
+                RD_list = ast.literal_eval(f"[({radius // 10},2),({radius % 10},0)]")
+            DICT = False
+            one_step = prepare_r_smiles(retro_model_path, retro_topk, forward_model_path, forward_topk, CSS, RD_list, DICT)
+        print("One step model prepared.")
         if use_value_fn:
             model = ValueMLP(
                 n_layers=1,

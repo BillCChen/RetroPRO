@@ -1,4 +1,4 @@
-name: retro_star_env
+name: retro_star
 channels:
   - rdkit
   - conda-forge
@@ -16,5 +16,5 @@ dependencies:
   - networkx
   - graphviz
   - python-graphviz
-prefix: /home/binghong/miniconda3/envs/retro_star_env
+# prefix: /home/binghong/miniconda3/envs/retro_star_env
 

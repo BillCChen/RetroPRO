@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RetroTMP 逆合成预测平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .main-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin: 30px auto;
+            padding: 40px;
+            max-width: 1200px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid var(--secondary-color);
+        }
+        
+        .header h1 {
+            color: var(--primary-color);
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #7f8c8d;
+            font-size: 1.1rem;
+        }
+        
+        .param-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border-left: 5px solid var(--secondary-color);
+        }
+        
+        .param-section h4 {
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .form-control:focus {
+            border-color: var(--secondary-color);
+            box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+        }
+        
+        .btn-primary {
+            background: var(--secondary-color);
+            border: none;
+            border-radius: 50px;
+            padding: 12px 40px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
+        }
+        
+        .result-card {
+            display: none;
+            margin-top: 30px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .result-header {
+            background: var(--primary-color);
+            color: white;
+            padding: 20px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 2rem;
+        }
+        
+        .spinner {
+            margin-right: 20px;
+        }
+        
+        .molecule-viewer {
+            background: #ecf0f1;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        .step-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+            border-left: 4px solid var(--secondary-color);
+        }
+        
+        .step-number {
+            background: var(--secondary-color);
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="main-container">
+            <!-- Header -->
+            <div class="header">
+                <h1><i class="fas fa-atom"></i> RetroTMP 逆合成预测平台</h1>
+                <p>基于化学语义分割的智能分子合成路径规划</p>
+            </div>
+
+            <!-- Input Section -->
+            <div class="param-section">
+                <h4><i class="fas fa-molecule"></i> 分子输入</h4>
+                <div class="mb-3">
+                    <label for="smilesInput" class="form-label">目标分子SMILES</label>
+                    <textarea 
+                        class="form-control" 
+                        id="smilesInput" 
+                        rows="3" 
+                        placeholder="例如: CCCC[C@@H](C(=O)N1CCC[C@H]1C(=O)O)[C@@H](F)C(=O)OC"
+                    ></textarea>
+                    <div class="form-text">输入要预测合成路径的目标分子SMILES字符串</div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">分子预览</label>
+                        <div class="molecule-viewer" id="molPreview">
+                            <i class="fas fa-image" style="font-size: 3rem; color: #bdc3c7;"></i>
+                            <p style="margin-top: 10px; color: #7f8c7d;">输入SMILES后自动渲染</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parameters Section -->
+            <div class="param-section">
+                <h4><i class="fas fa-cogs"></i> 参数设置</h4>
+                
+                <div class="row">
+                    <div class="col-md-3">
+                        <label for="iterations" class="form-label">迭代次数</label>
+                        <input type="number" class="form-control" id="iterations" value="100" min="10" max="500">
+                        <div class="form-text">搜索迭代次数</div>
+                    </div>
+
+                    <div class="col-md-3">
+                        <label for="oneStepType" class="form-label">单步模型类型</label>
+                        <select class="form-select" id="oneStepType">
+                            <option value="mlp" selected>默认-MLP模型</option>
+                            <option value="deep_learning">深度学习模型</option>
+                            <option value="others">自定义模型</option>
+                            <!-- 根据实际模型类型添加更多选项 -->
+                        </select>
+                        <div class="form-text">选择使用的单步逆合成模型</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="CCS" class="form-label">化学语义分割</label>
+                        <select class="form-select" id="CCS">
+                            <option value="false" selected>关闭</option>
+                            <option value="true">开启</option>
+                        </select>
+                        <div class="form-text">是否使用化学语义分割技术</div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <label for="radius" class="form-label">半径</label>
+                        <input type="number" class="form-control" id="radius" value="9" min="1" max="10">
+                        <div class="form-text">设置半径值(范围1-10)</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="expansionTopk" class="form-label">扩展Top-K</label>
+                        <input type="number" class="form-control" id="expansionTopk" value="8" min="1" max="100">
+                        <div class="form-text">每次扩展的候选数</div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <label for="useValueFn" class="form-label">使用价值函数</label>
+                        <select class="form-select" id="useValueFn">
+                            <option value="true" selected>是</option>
+                            <option value="false">否</option>
+                        </select>
+                        <div class="form-text">是否启用学习到的价值函数</div>
+                    </div>
+                    
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button class="btn btn-primary w-100" onclick="startPrediction()">
+                            <i class="fas fa-play"></i> 开始预测
+                        </button>
+                    </div>
+                    <!-- 在radius输入框之后，提交按钮之前添加 -->
+                    <div class="col-md-3">
+                        <label for="filePrefix" class="form-label">结果文件前缀</label>
+                        <input type="text" class="form-control" id="filePrefix" placeholder="可选">
+                        <div class="form-text">留空则使用当前时间</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="result-card" id="resultCard">
+                <div class="result-header">
+                    <span><i class="fas fa-chart-line"></i> 预测结果</span>
+                    <div>
+                        <button class="btn btn-sm btn-light" onclick="downloadResult('json')">
+                            <i class="fas fa-download"></i> JSON
+                        </button>
+                        <button class="btn btn-sm btn-light ms-2" onclick="downloadResult('html')">
+                            <i class="fas fa-image"></i> 路径图html
+                        </button>
+                        <button class="btn btn-sm btn-light ms-2" onclick="embedVisualization()">
+                            <i class="fas fa-sitemap"></i> 路径可视化
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="p-4">
+                    <div id="resultContent">
+                        <!-- 动态加载结果 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="text-center">
+            <div class="spinner-border" role="status"></div>
+            <div>正在执行逆合成预测...</div>
+            <div class="mt-3" style="font-size: 1rem;">这可能需要几分钟时间</div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentTaskId = null;
+
+        // SMILES输入实时预览
+        document.getElementById('smilesInput').addEventListener('input', function() {
+            const smiles = this.value.trim();
+            const preview = document.getElementById('molPreview');
+            
+            if (smiles && smiles.length > 5) {
+                // 这里可以集成JSME或RDKit.js进行实时渲染
+                // 简化版：显示分子信息
+                preview.innerHTML = `
+                    <div style="padding: 20px; background: white; border-radius: 8px;">
+                        <i class="fas fa-check-circle" style="color: #27ae60; font-size: 2rem;"></i>
+                        <p style="margin-top: 10px; font-size: 0.9rem; word-break: break-all;">
+                            ${smiles}
+                        </p>
+                        <p style="color: #7f8c7d; font-size: 0.8rem;">已识别分子结构</p>
+                    </div>
+                `;
+            } else {
+                preview.innerHTML = `
+                    <i class="fas fa-image" style="font-size: 3rem; color: #bdc3c7;"></i>
+                    <p style="margin-top: 10px; color: #7f8c7d;">输入SMILES后自动渲染</p>
+                `;
+            }
+        });
+
+        async function startPrediction() {
+            const smiles = document.getElementById('smilesInput').value.trim();
+            
+            if (!smiles) {
+                alert('请输入SMILES字符串！');
+                return;
+            }
+
+            // 显示加载动画
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            
+            const requestData = {
+                smiles: smiles,
+                iterations: parseInt(document.getElementById('iterations').value),
+                expansion_topk: parseInt(document.getElementById('expansionTopk').value),
+                use_value_fn: document.getElementById('useValueFn').value === 'true',
+                one_step_type: document.getElementById('oneStepType').value,
+                ccs: document.getElementById('CCS').value === 'true',
+                radius: parseInt(document.getElementById('radius').value),
+                file_prefix: document.getElementById('filePrefix').value.trim()  // 添加这一行
+
+            };
+
+            try {
+                const response = await fetch('/api/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    currentTaskId = result.task_id;
+                    await loadResult(result.task_id);
+                } else {
+                    throw new Error(result.detail || '预测失败');
+                }
+            } catch (error) {
+                alert('预测失败: ' + error.message);
+            } finally {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+
+        async function loadResult(taskId) {
+            try {
+                const response = await fetch(`/api/result/${taskId}`);
+                const result = await response.json();
+                
+                // 显示结果卡片
+                document.getElementById('resultCard').style.display = 'block';
+                
+                // 渲染结果内容
+                renderResult(result);
+                
+            } catch (error) {
+                alert('加载结果失败: ' + error.message);
+            }
+        }
+        
+        function renderResult(data) {
+            const content = document.getElementById('resultContent');
+            
+            if (!data.result || !data.result.succ) {
+                content.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> 未能找到有效的合成路径
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> 
+                    成功找到合成路径！共 ${data.result.route_len} 个步骤
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <h5><i class="fas fa-info-circle"></i> 任务信息</h5>
+                        <ul class="list-unstyled">
+                            <li><strong>任务ID:</strong> ${data.task_id}</li>
+                            <li><strong>时间:</strong> ${new Date(data.timestamp).toLocaleString()}</li>
+                            <li><strong>迭代次数:</strong> ${data.parameters.iterations}</li>
+                            <li><strong>使用价值函数:</strong> ${data.parameters.use_value_fn ? '是' : '否'}</li>
+                            <li><strong>单步模型:</strong> ${data.parameters.one_step_type}</li>
+                            <li><strong>Top-K:</strong> ${data.parameters.expansion_topk}</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h5><i class="fas fa-molecule"></i> 输入分子</h5>
+                        <div class="molecule-viewer" style="font-size: 0.9rem; word-break: break-all;">
+                            ${data.input_smiles}
+                        </div>
+                    </div>
+                </div>
+                
+                <h5><i class="fas fa-route"></i> 合成路径</h5>
+            `;
+
+            // 渲染每个步骤
+            data.route.forEach((step, index) => {
+                html += `
+                    <div class="step-card">
+                        <div class="d-flex align-items-center">
+                            <span class="step-number">${index + 1}</span>
+                            <div>
+                                <strong>反应类型:</strong> ${step.reaction_type || '未知'}<br>
+                                <strong>SMILES:</strong> <code>${step.smiles}</code>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            // 显示路径图
+            // html += `
+            //     <div class="mt-4 text-center">
+            //         <h5><i class="fas fa-image"></i> 合成路径可视化</h5>
+            //         <img src="/api/download/${data.task_id}/png" 
+            //              alt="合成路径图" 
+            //              class="img-fluid rounded shadow"
+            //              style="max-height: 400px;"
+            //              onerror="this.style.display='none'">
+            //     </div>
+            // `;
+
+            // content.innerHTML = html;
+            content.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> 成功找到合成路径！共 ${data.route.length} 步
+                </div>
+                <p><strong>任务ID:</strong> ${data.task_id}</p>
+                <div class="mt-3">
+                    <a href="/api/download/${data.task_id}/json" class="btn btn-sm btn-primary" target="_blank">
+                        <i class="fas fa-download"></i> JSON
+                    </a>
+                    ${data.html_available ? `
+                        <a href="/api/download_html/${data.task_id}" class="btn btn-sm btn-success ms-2" target="_blank">
+                            <i class="fas fa-sitemap"></i> 交互式路径图
+                        </a>
+                    ` : ''}
+                </div>
+                
+                <hr>
+                <details>
+                    <summary>展开查看原始数据</summary>
+                    <pre style="font-size: 12px;">${JSON.stringify(data, null, 2)}</pre>
+                </details>
+            `;
+        }
+
+        function downloadResult(format) {
+            if (!currentTaskId) return;
+            
+            const link = document.createElement('a');
+            // FIX: 为html格式使用独立的API端点
+            if (format === 'html') {
+                link.href = `/api/download_html/${currentTaskId}`;
+                link.download = `synthesis_path_${currentTaskId}.html`;
+            } else {
+                link.href = `/api/download/${currentTaskId}/${format}`;
+                link.download = `retro_star_${currentTaskId}.${format}`;
+            }
+            link.click();
+        }
+        // 在 downloadResult 函数之后添加
+        async function embedVisualization() {
+            if (!currentTaskId) return;
+            
+            const content = document.getElementById('resultContent');
+            
+            // 显示加载状态
+            content.innerHTML = `
+                <div class="text-center p-5">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2">正在加载可视化...</p>
+                </div>
+            `;
+            
+            try {
+                const response = await fetch(`/api/download_html/${currentTaskId}`);
+                
+                if (!response.ok) {
+                    throw new Error(`加载失败: ${response.status}`);
+                }
+                
+                const htmlContent = await response.text();
+                
+                // 创建容器来隔离样式
+                content.innerHTML = `
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i> 成功找到合成路径！
+                    </div>
+                    <div id="visualization-container" style="border: 1px solid #ddd; border-radius: 8px; overflow: auto; max-height: 600px;"></div>
+                    <div class="mt-3">
+                        <a href="/api/download/${currentTaskId}/json" class="btn btn-sm btn-primary" target="_blank">
+                            <i class="fas fa-download"></i> 下载JSON
+                        </a>
+                        <a href="/api/download_html/${currentTaskId}" class="btn btn-sm btn-success ms-2" target="_blank">
+                            <i class="fas fa-external-link-alt"></i> 新标签页打开
+                        </a>
+                    </div>
+                `;
+                
+                // 使用iframe嵌入HTML（最安全的方式）
+                const container = document.getElementById('visualization-container');
+                const iframe = document.createElement('iframe');
+                iframe.style.width = '100%';
+                iframe.style.height = '500px';
+                iframe.style.border = 'none';
+                iframe.style.display = 'block';
+                
+                // 将HTML内容写入iframe
+                iframe.srcdoc = htmlContent;
+                
+                // 自适应高度
+                iframe.onload = function() {
+                    try {
+                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                        const height = iframeDoc.body.scrollHeight;
+                        iframe.style.height = Math.max(height, 500) + 'px';
+                    } catch (e) {
+                        console.log('无法自动调整iframe高度:', e);
+                    }
+                };
+                
+                container.appendChild(iframe);
+                
+            } catch (error) {
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle"></i> 加载可视化失败: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        // 添加防抖函数
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // 缓存已处理的SMILES
+        const smilesCache = {};
+
+        // 优化后的预览函数（带防抖）
+        const updateMoleculePreview = debounce(async function(smiles) {
+            const preview = document.getElementById('molPreview');
+            
+            if (!smiles || smiles.length < 5) {
+                preview.innerHTML = `
+                    <i class="fas fa-image" style="font-size: 3rem; color: #bdc3c7;"></i>
+                    <p style="margin-top: 10px; color: #7f8c7d;">输入SMILES后自动渲染</p>
+                `;
+                return;
+            }
+
+            // 检查缓存
+            if (smilesCache[smiles]) {
+                renderPreview(smilesCache[smiles]);
+                return;
+            }
+
+            // 显示加载状态
+            preview.innerHTML = `
+                <div class="text-center p-3">
+                    <div class="spinner-border text-primary" role="status" style="width: 2rem; height: 2rem;"></div>
+                    <p style="margin-top: 10px; color: #7f8c7d;">正在生成分子结构...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch('/api/preview-smiles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ smiles: smiles })
+                });
+                
+                const result = await response.json();
+                
+                // 缓存结果
+                smilesCache[smiles] = result;
+                
+                renderPreview(result);
+            } catch (error) {
+                preview.innerHTML = `
+                    <div style="padding: 15px; background: #f8d7da; border-radius: 8px; border: 1px solid #dc3545;">
+                        <i class="fas fa-times-circle" style="color: #dc3545; font-size: 2rem;"></i>
+                        <p style="margin-top: 10px; font-size: 0.85rem; color: #721c24;">
+                            <strong>错误:</strong> 预览服务连接失败
+                        </p>
+                    </div>
+                `;
+            }
+        }, 500); // 500ms防抖延迟
+
+        // 渲染预览结果
+        function renderPreview(result) {
+            const preview = document.getElementById('molPreview');
+            
+            if (result.valid) {
+                preview.innerHTML = `
+                    <div style="padding: 15px; background: white; border-radius: 8px;">
+                        <img src="${result.image}" alt="分子结构" style="width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        <p style="margin-top: 10px; font-size: 0.85rem; color: #27ae60;">
+                            <i class="fas fa-check-circle"></i> 有效的分子结构
+                        </p>
+                    </div>
+                `;
+            } else {
+                // SMILES无效，显示警告
+                preview.innerHTML = `
+                    <div style="padding: 15px; background: #fff3cd; border-radius: 8px; border: 1px solid #ffc107;">
+                        <i class="fas fa-exclamation-triangle" style="color: #ffc107; font-size: 2rem;"></i>
+                        <p style="margin-top: 10px; font-size: 0.85rem; color: #856404; font-weight: 500;">
+                            ${result.error}
+                        </p>
+                        <p style="font-size: 0.8rem; color: #856404; margin-top: 8px;">
+                            <i class="fas fa-info-circle"></i> 请检查SMILES字符串是否正确
+                        </p>
+                    </div>
+                `;
+            }
+        }
+
+        // 绑定输入事件
+        document.getElementById('smilesInput').addEventListener('input', function() {
+            updateMoleculePreview(this.value.trim());
+        });
+    </script>
+</body>
+</html>
