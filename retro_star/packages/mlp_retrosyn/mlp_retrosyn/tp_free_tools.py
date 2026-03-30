@@ -1,18 +1,5 @@
 import os
 import re
-import torch
-
-# Compatibility patch for PyTorch>=2.6 where torch.load defaults to weights_only=True.
-# OpenNMT-py 2.2.0 checkpoints require full object loading.
-if os.environ.get("RETROPRO_PATCH_TORCH_LOAD", "1") == "1" and not hasattr(torch.load, "_retropro_patched"):
-    _orig_torch_load = torch.load
-
-    def _retropro_torch_load(*args, **kwargs):
-        kwargs.setdefault("weights_only", False)
-        return _orig_torch_load(*args, **kwargs)
-
-    _retropro_torch_load._retropro_patched = True
-    torch.load = _retropro_torch_load
 
 try:
     from onmt.translate.translator import build_translator

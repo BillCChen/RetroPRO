@@ -219,7 +219,7 @@ bash scripts/run_benchmark_compare.sh \
    - `TP_FREE_FORWARD_BATCH_SIZE`（默认 256）
    - `TP_FREE_MAPPER_BATCH_SIZE`（默认 64）
 3. 修复/增强了 DICT 相关逻辑中的 key 对齐与重复写入问题。
-4. 新增 `OpenNMT-py 2.2.0 + PyTorch>=2.6` 的 `torch.load(weights_only=False)` 兼容补丁（代码内自动处理）。
+4. OpenNMT 与 PyTorch 版本兼容由环境侧保证，不在仓库代码中强制打补丁。
 
 ## 13. Template-Free Batch Impact Benchmark Script
 
