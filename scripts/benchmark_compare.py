@@ -11,6 +11,14 @@ Usage (from repo root):
     --one-step-type template_based \
     --test-routes uspto190 \
     --parallel-nums 4,8,12
+
+Template-free (CSS/DICT) example:
+  python scripts/benchmark_compare.py \
+    --python python \
+    --one-step-type template_free \
+    --test-routes uspto190 \
+    --parallel-nums 5,8 \
+    --extra-args "--CSS --RD_list '[(7,2),(3,0)]' --DICT"
 """
 
 from __future__ import annotations
@@ -234,6 +242,11 @@ def run_pre_tests(args: argparse.Namespace, repo_root: Path, report_dir: Path) -
             "cwd": repo_root,
         },
         {
+            "name": "tp_free_batch_smoke",
+            "cmd": [args.python, "tests/tp_free_batch_smoke_test.py"],
+            "cwd": repo_root,
+        },
+        {
             "name": "py_compile",
             "cmd": [
                 args.python,
@@ -243,6 +256,8 @@ def run_pre_tests(args: argparse.Namespace, repo_root: Path, report_dir: Path) -
                 "retro_star/common/parse_args.py",
                 "retro_star/alg/molstar_parallel.py",
                 "retro_star/alg/molstar_task.py",
+                "retro_star/packages/mlp_retrosyn/mlp_retrosyn/tp_free_inference.py",
+                "retro_star/packages/mlp_retrosyn/mlp_retrosyn/tp_free_tools.py",
                 "scripts/benchmark_compare.py",
             ],
             "cwd": repo_root,

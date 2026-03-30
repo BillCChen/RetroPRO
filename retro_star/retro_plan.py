@@ -15,6 +15,23 @@ from model import ValueMLP
 from alg.molstar_parallel import molstar_parallel
 
 
+def _resolve_runtime_config():
+    gpu_id = args.gpu
+    if gpu_id >= 0 and not torch.cuda.is_available():
+        logging.info('Requested gpu=%d but CUDA is unavailable; fallback to CPU/MPS where possible.', gpu_id)
+        gpu_id = -1
+
+    if gpu_id >= 0:
+        value_device = torch.device('cuda')
+    else:
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            value_device = torch.device('mps')
+            logging.info('Using MPS device for value model inference.')
+        else:
+            value_device = torch.device('cpu')
+    return gpu_id, value_device
+
+
 def _load_routes(test_routes):
     if test_routes == "uspto190":
         route_file = "dataset/routes_possible_test_hard.pkl"
@@ -44,9 +61,9 @@ def _load_routes(test_routes):
     raise ValueError("Unknown test routes dataset: %s" % test_routes)
 
 
-def _build_one_step_model():
+def _build_one_step_model(runtime_gpu):
     if args.one_step_type == "template_based":
-        return prepare_mlp(args.mlp_templates, args.mlp_model_dump)
+        return prepare_mlp(args.mlp_templates, args.mlp_model_dump, device=runtime_gpu)
     if args.one_step_type == "template_free":
         import ast
 
@@ -60,6 +77,7 @@ def _build_one_step_model():
             args.CSS,
             args.RD_list,
             args.DICT,
+            device=runtime_gpu,
         )
     raise ValueError("Unknown one step model type: %s" % args.one_step_type)
 
@@ -241,13 +259,13 @@ def _run_parallel(target_mols, starting_mols, one_step, value_fn):
 
 
 def retro_plan():
-    device = torch.device('cuda' if args.gpu >= 0 else 'cpu')
+    runtime_gpu, device = _resolve_runtime_config()
 
     starting_mols = prepare_starting_molecules(args.starting_molecules)
     routes = _load_routes(args.test_routes)
     target_mols = [route[0].split('>')[0] for route in routes]
 
-    one_step = _build_one_step_model()
+    one_step = _build_one_step_model(runtime_gpu)
     value_fn = _build_value_fn(device)
 
     if not os.path.exists(args.result_folder):

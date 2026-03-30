@@ -1,4 +1,5 @@
 from __future__ import print_function
+import os
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -23,7 +24,10 @@ import pickle
 from .tp_free_tools import random_substructure,rand_aug_smiles,repeat_retro_k
 from .tp_free_tools import Load_Retro_Model, Load_Forward_Model
 from rdchiral import template_extractor as extractor
-from rxnmapper import RXNMapper,BatchedMapper
+try:
+    from rxnmapper import BatchedMapper
+except Exception:
+    BatchedMapper = None
 class TP_free_Model(object):
     def __init__(self,retro_model_path,retro_topk,forward_model_path,forwad_topk=1,CCS=True,RD_list=[(9,0)],DICT=True, device=-1):
         super(TP_free_Model, self).__init__()
@@ -32,13 +36,36 @@ class TP_free_Model(object):
         self.RD_list = RD_list
         self.use_DICT = DICT
         self.DICT = defaultdict(list)
-        self.retro_model = Load_Retro_Model(retro_model_path,beam_size=10, n_best=retro_topk, batch_size=20)
-        print("Successing Loading Retro Model!")
-        self.retro_topk = retro_topk
-        self.forward_model = Load_Forward_Model(forward_model_path,beam_size=10, n_best=forwad_topk, batch_size=20)
-        print("Successing Loading forward Model!")
-        self.mapper = BatchedMapper(batch_size=10)
-        print("Successing Loading Reaction-mapping Model!")
+        self.retro_topk = int(retro_topk)
+        self.forward_topk = int(forwad_topk)
+        self.retro_batch_size = int(os.getenv("TP_FREE_RETRO_BATCH_SIZE", "128"))
+        self.forward_batch_size = int(os.getenv("TP_FREE_FORWARD_BATCH_SIZE", "256"))
+        self.mapper_batch_size = int(os.getenv("TP_FREE_MAPPER_BATCH_SIZE", "64"))
+        self.dict_dump_every = int(os.getenv("TP_FREE_DICT_DUMP_EVERY", "0"))
+        self.dict_dump_dir = os.getenv("TP_FREE_DICT_DUMP_DIR", "")
+        self._dict_update_count = 0
+
+        gpu_device = int(device) if isinstance(device, int) and device >= 0 else -1
+        self.retro_model = Load_Retro_Model(
+            retro_model_path,
+            beam_size=10,
+            n_best=self.retro_topk,
+            batch_size=self.retro_batch_size,
+            gpu_device=gpu_device,
+        )
+        logging.info("Loaded retro model with batch_size=%d, gpu=%d", self.retro_batch_size, gpu_device)
+        self.forward_model = Load_Forward_Model(
+            forward_model_path,
+            beam_size=10,
+            n_best=self.forward_topk,
+            batch_size=self.forward_batch_size,
+            gpu_device=gpu_device,
+        )
+        logging.info("Loaded forward model with batch_size=%d, gpu=%d", self.forward_batch_size, gpu_device)
+        if BatchedMapper is None:
+            raise ImportError("rxnmapper is required for template_free inference. Please install `rxnmapper`.")
+        self.mapper = BatchedMapper(batch_size=self.mapper_batch_size)
+        logging.info("Loaded mapper with batch_size=%d", self.mapper_batch_size)
     def random_sampling(self, x,RD_list,topk):
         """
         对输入分子x进行随机子结构采样，并通过随机SMILES增强生成多样化的候选反应物。
@@ -46,11 +73,13 @@ class TP_free_Model(object):
         # R,D = 4,5
         # R, D = 9,0
         output = set()
+        rd_size = max(len(RD_list), 1)
+        each_num = max(1, int(topk) // rd_size)
         for R,D in RD_list:
             if self.use_CCS:
-                sub_smiles = random_substructure(x, r=R, d=D,num = topk//len(RD_list))
+                sub_smiles = random_substructure(x, r=R, d=D,num=each_num)
             else:
-                sub_smiles = [x for _ in range(topk//len(RD_list))]
+                sub_smiles = [x for _ in range(each_num)]
             for sub_smi in sub_smiles:
                 mol = Chem.MolFromSmiles(sub_smi)
                 if mol is not None:
@@ -146,88 +175,116 @@ class TP_free_Model(object):
             templates.append( (cano_smi,template)  )
         return templates
     def renew_DICT(self, templates):
+        updated = 0
         for key,rule in templates:
-            # self.DICT = defaultdict(list)
-            self.DICT[key].append(rule)
-        save_dir = f"results/tp_free_DICT_{day_hour_min_sec}.pkl"
-        pickle.dump(self.DICT, open(save_dir, 'wb'))
-    def run(self, x, topk=20):
-        # 去除x的立体化学信息
-        x = Chem.MolToSmiles(Chem.MolFromSmiles(x), isomericSmiles=False)
-        smiles = self.random_sampling(x,self.RD_list, topk)
-        aug_smiles = []
-        if self.use_DICT:
-            rule_k_from_DICT = []
-            for smi in smiles:
-                if self.smi2cano_smiels(smi) in self.DICT.keys():
-                    rule_k_from_DICT.extend(self.DICT[smi])
-                    smiles.remove(smi)
-                    aug_smiles.extend(rand_aug_smiles(smi,1))
-                else:
-                    aug_smiles.extend(rand_aug_smiles(smi,5))
-        else:
-            for smi in smiles:
-                aug_smiles.extend(rand_aug_smiles(smi,5))
-        # print(f"smiles: {smiles}")
-        if len(aug_smiles) == 0:
-            aug_smiles = rand_aug_smiles(x,topk)
-        if len(aug_smiles) == 0:
-            aug_smiles = [x]
+            if rule not in self.DICT[key]:
+                self.DICT[key].append(rule)
+                updated += 1
+        self._dict_update_count += updated
+        if self.dict_dump_every > 0 and self._dict_update_count >= self.dict_dump_every and self.dict_dump_dir:
+            os.makedirs(self.dict_dump_dir, exist_ok=True)
+            save_dir = os.path.join(self.dict_dump_dir, f"tp_free_DICT_{day_hour_min_sec}.pkl")
+            pickle.dump(self.DICT, open(save_dir, 'wb'))
+            self._dict_update_count = 0
+
+    def _canonicalize_target(self, x):
         try:
-            retro = self.retro_model.inference(aug_smiles)
-        except Exception as e:
-            print(f"Retro model inference error: {e}")
-            print(f"Input smiles: {aug_smiles}")
-            # raise e
-        aug_smiles = repeat_retro_k(aug_smiles,self.retro_topk)
-        # print(f"{self.retro_topk} * aug_smiles: {aug_smiles[:5]}")
-        smiles, retro = self.invalid_retro_filter(aug_smiles, retro)
-        # s_r = [f"{s}.{r}" for s,r in zip(smiles,retro)]
-        # print(f"filter retro: {retro[:5]}")
-        if len(retro) > 0:
-            forward = self.forward_model.inference(retro)
-        else:
-            forward = []
-        print(f"forward: {forward[:5]}")
-        reactions = self.filter(x,aug_smiles, retro, forward)
-        templates = self.extract_templates(reactions)
+            mol = Chem.MolFromSmiles(x)
+            if mol is None:
+                return x
+            return Chem.MolToSmiles(mol, isomericSmiles=False)
+        except Exception:
+            return x
+
+    def _is_valid_retro(self, retro_smi):
+        if not retro_smi:
+            return False
+        if '.' not in retro_smi:
+            return self.check_smiles_valid(retro_smi) is not None
+        parts = retro_smi.split('.')
+        for part in parts:
+            if self.check_smiles_valid(part) is None:
+                return False
+        return True
+
+    def _prepare_single_target(self, x, topk):
+        target = self._canonicalize_target(x)
+        sampled = self.random_sampling(target, self.RD_list, topk)
+
+        aug_smiles = []
+        dict_rules = []
         if self.use_DICT:
-            self.renew_DICT(templates)
-        rule_k = [rule for _,rule in templates]
+            for smi in sampled:
+                cano_smi = self.smi2cano_smiels(smi)
+                cached_rules = self.DICT.get(cano_smi, [])
+                if len(cached_rules) > 0:
+                    dict_rules.extend(cached_rules)
+                    aug_smiles.extend(rand_aug_smiles(smi, 1))
+                else:
+                    aug_smiles.extend(rand_aug_smiles(smi, 5))
+        else:
+            for smi in sampled:
+                aug_smiles.extend(rand_aug_smiles(smi, 5))
+
+        if len(aug_smiles) == 0:
+            aug_smiles = rand_aug_smiles(target, max(int(topk), 1))
+        if len(aug_smiles) == 0:
+            aug_smiles = [target]
+        return {
+            'target': target,
+            'aug_smiles': aug_smiles,
+            'dict_rules': dict_rules,
+        }
+
+    def _align_forward_outputs(self, forward_raw, expected_size):
+        if expected_size == 0:
+            return []
+        if len(forward_raw) == expected_size:
+            return list(forward_raw)
+        if self.forward_topk > 1 and len(forward_raw) >= expected_size * self.forward_topk:
+            outputs = []
+            for idx in range(expected_size):
+                outputs.append(forward_raw[idx * self.forward_topk])
+            return outputs
+
+        logging.info(
+            "Forward output size mismatch: expected=%d got=%d; truncating/padding.",
+            expected_size,
+            len(forward_raw),
+        )
+        outputs = list(forward_raw[:expected_size])
+        while len(outputs) < expected_size:
+            outputs.append("")
+        return outputs
+
+    def _rules_to_result(self, x, rule_list):
         reactants = []
         scores = []
         templates = []
-        if self.use_DICT:
-            sum_rule = rule_k_from_DICT + rule_k
-        else:
-            sum_rule = rule_k
-        for i , rule in enumerate(sum_rule):
+        for rule in rule_list:
             out1 = []
             try:
-                # print(f'rule{i}: {rule}')
-                # rdchiralRunText(rule, x)
                 all_out = AllChem.ReactionFromSmarts(rule).RunReactants((Chem.MolFromSmiles(x),))
-                if len(all_out) == 0: continue
-                # if len(out1) > 1: print("more than two reactants."),print(out1)
-                out1 = [Chem.MolToSmiles(x) for x in all_out[0]]
+                if len(all_out) == 0:
+                    continue
+                out1 = [Chem.MolToSmiles(mol) for mol in all_out[0]]
                 for smi in out1:
                     if Chem.MolFromSmiles(smi) is None:
-                        continue
+                        out1 = []
+                        break
+                if len(out1) == 0:
+                    continue
                 out1 = ['.'.join(sorted(out1))]
-                # out1 = sorted(out1)
                 for reactant in out1:
                     reactants.append(reactant)
                     scores.append(1.0)
                     templates.append(rule)
-            except ValueError as e:
-                # print(f"Error processing rule: {rule}, error: {e}")
+            except ValueError:
                 pass
-            # except KeyError:
-            #     pass
-        print(f" groups num : {len(reactants)}")
-        if len(reactants) == 0: 
-            print(f" groups num : {len(reactants)}")
+
+        if len(reactants) == 0:
             return None
+
         reactants_d = defaultdict(list)
         for r, s, t in zip(reactants, scores, templates):
             if '.' in r:
@@ -237,11 +294,95 @@ class TP_free_Model(object):
                 reactants_d[r].append((s, t))
 
         reactants, scores, templates = merge(reactants_d)
-        print(f"final groups num : {len(reactants)}")
         total = sum(scores)
+        if total <= 0:
+            return None
         scores = [s / total for s in scores]
-        return {'reactants':reactants,
-                'scores' : scores,
-                'template' : templates}
+        return {
+            'reactants': reactants,
+            'scores': scores,
+            'template': templates,
+        }
 
+    def run_batch(self, x_list, topk=20):
+        if x_list is None or len(x_list) == 0:
+            return []
 
+        prepared = [self._prepare_single_target(x, topk) for x in x_list]
+        flat_aug_smiles = []
+        flat_owner = []
+        for owner_idx, item in enumerate(prepared):
+            for smi in item['aug_smiles']:
+                flat_aug_smiles.append(smi)
+                flat_owner.append(owner_idx)
+
+        owner_buckets = defaultdict(lambda: {'smiles': [], 'retro': [], 'forward': []})
+        if len(flat_aug_smiles) > 0:
+            try:
+                retro = self.retro_model.inference(flat_aug_smiles)
+            except Exception as exc:
+                logging.info("Retro model inference error for batch size %d: %s", len(flat_aug_smiles), exc)
+                retro = []
+
+            expanded_aug = repeat_retro_k(flat_aug_smiles, self.retro_topk)
+            expanded_owner = repeat_retro_k(flat_owner, self.retro_topk)
+            if len(retro) != len(expanded_aug):
+                valid_len = min(len(retro), len(expanded_aug))
+                logging.info(
+                    "Retro output size mismatch: expected=%d got=%d; truncating to %d",
+                    len(expanded_aug),
+                    len(retro),
+                    valid_len,
+                )
+                retro = list(retro[:valid_len])
+                expanded_aug = list(expanded_aug[:valid_len])
+                expanded_owner = list(expanded_owner[:valid_len])
+
+            valid_owner = []
+            valid_smiles = []
+            valid_retro = []
+            for owner_idx, ccs_smi, retro_smi in zip(expanded_owner, expanded_aug, retro):
+                if self._is_valid_retro(retro_smi):
+                    valid_owner.append(owner_idx)
+                    valid_smiles.append(ccs_smi)
+                    valid_retro.append(retro_smi)
+
+            if len(valid_retro) > 0:
+                try:
+                    forward_raw = self.forward_model.inference(valid_retro)
+                except Exception as exc:
+                    logging.info("Forward model inference error for batch size %d: %s", len(valid_retro), exc)
+                    forward_raw = []
+            else:
+                forward_raw = []
+            valid_forward = self._align_forward_outputs(forward_raw, len(valid_retro))
+
+            for owner_idx, ccs_smi, retro_smi, forward_smi in zip(valid_owner, valid_smiles, valid_retro, valid_forward):
+                owner_buckets[owner_idx]['smiles'].append(ccs_smi)
+                owner_buckets[owner_idx]['retro'].append(retro_smi)
+                owner_buckets[owner_idx]['forward'].append(forward_smi)
+
+        outputs = []
+        for owner_idx, item in enumerate(prepared):
+            target = item['target']
+            bucket = owner_buckets.get(owner_idx, {'smiles': [], 'retro': [], 'forward': []})
+            reactions = self.filter(target, bucket['smiles'], bucket['retro'], bucket['forward'])
+            templates = self.extract_templates(reactions)
+            if self.use_DICT:
+                self.renew_DICT(templates)
+
+            rule_k = [rule for _, rule in templates]
+            if self.use_DICT:
+                sum_rule = item['dict_rules'] + rule_k
+            else:
+                sum_rule = rule_k
+
+            outputs.append(self._rules_to_result(target, sum_rule))
+
+        return outputs
+
+    def run(self, x, topk=20):
+        outputs = self.run_batch([x], topk=topk)
+        if len(outputs) == 0:
+            return None
+        return outputs[0]

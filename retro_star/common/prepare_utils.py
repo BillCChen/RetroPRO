@@ -34,18 +34,18 @@ def prepare_starting_molecules(filename):
     logging.info('%d starting molecules loaded' % len(starting_mols))
     return starting_mols
 
-def prepare_mlp(templates, model_dump):
+def prepare_mlp(templates, model_dump, device=-1):
     logging.info('Templates: %s' % templates)
     logging.info('Loading trained mlp model from %s' % model_dump)
-    one_step = MLPModel(model_dump, templates, device=-1)
+    one_step = MLPModel(model_dump, templates, device=device)
     return one_step
-def prepare_r_smiles(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT):
+def prepare_r_smiles(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT, device=-1):
     from mlp_retrosyn.tp_free_inference import TP_free_Model
     logging.info('Loading trained R-SMILES model from %s' % retro_model_path)
     logging.info('Loading trained Forward model from %s' % forward_model_path)
     logging.info('CSS: %s' % CSS)
     logging.info('DICT: %s' % DICT)
-    one_step = TP_free_Model(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT, device=0)
+    one_step = TP_free_Model(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT, device=device)
     return one_step
 def prepare_molstar_planner(one_step, value_fn, starting_mols, expansion_topk,
                             iterations, viz=False, viz_dir=None):

@@ -1,6 +1,23 @@
 import os
 import re
-from onmt.translate.translator import build_translator
+import torch
+
+# Compatibility patch for PyTorch>=2.6 where torch.load defaults to weights_only=True.
+# OpenNMT-py 2.2.0 checkpoints require full object loading.
+if os.environ.get("RETROPRO_PATCH_TORCH_LOAD", "1") == "1" and not hasattr(torch.load, "_retropro_patched"):
+    _orig_torch_load = torch.load
+
+    def _retropro_torch_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _orig_torch_load(*args, **kwargs)
+
+    _retropro_torch_load._retropro_patched = True
+    torch.load = _retropro_torch_load
+
+try:
+    from onmt.translate.translator import build_translator
+except Exception:
+    build_translator = None
 from types import SimpleNamespace
 from rdkit import Chem
 import random
@@ -149,6 +166,8 @@ def random_substructure(smiles, r=4, d=2, num=1):
 
 class Load_Retro_Model:
     def __init__(self, model_path,beam_size=10, n_best=3, batch_size=25, gpu_device=0 ):
+        if build_translator is None:
+            raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
         self.model_path = model_path
         self.gpu_device = gpu_device
         self.beam_size = beam_size
@@ -200,6 +219,8 @@ class Load_Retro_Model:
     
 class Load_Forward_Model:
     def __init__(self, model_path,beam_size=10, n_best=1, batch_size=25, gpu_device=0 ):
+        if build_translator is None:
+            raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
         self.model_path = model_path
         self.gpu_device = gpu_device
         self.beam_size = beam_size

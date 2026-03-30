@@ -201,3 +201,22 @@ bash scripts/run_benchmark_compare.sh \
 2. 汇总报告：`benchmark_report.md`
 3. 原始结构化数据：`benchmark_results.json`
 4. 每次运行日志：`logs/run_*.log`
+
+## 12. Template-Free Batch Acceleration (CSS/DICT)
+
+已实现 `TP_free_Model.run_batch(...)`，用于 `template_free --CSS --DICT` 路径：
+
+1. 对同一调度轮中的多个分子统一构造增强输入。
+2. 合并为单次 retro 模型批量推理（不再按分子逐条调用）。
+3. 合并为单次 forward 模型批量推理。
+4. 将 batched 输出按 owner molecule 回填，再分别做模板抽取与树扩展。
+
+实现细节：
+
+1. `run(x)` 保持兼容，内部委托到 `run_batch([x])`。
+2. 支持通过环境变量调节吞吐相关 batch size：
+   - `TP_FREE_RETRO_BATCH_SIZE`（默认 128）
+   - `TP_FREE_FORWARD_BATCH_SIZE`（默认 256）
+   - `TP_FREE_MAPPER_BATCH_SIZE`（默认 64）
+3. 修复/增强了 DICT 相关逻辑中的 key 对齐与重复写入问题。
+4. 新增 `OpenNMT-py 2.2.0 + PyTorch>=2.6` 的 `torch.load(weights_only=False)` 兼容补丁（代码内自动处理）。
