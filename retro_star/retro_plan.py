@@ -16,20 +16,30 @@ from alg.molstar_parallel import molstar_parallel
 
 
 def _resolve_runtime_config():
-    gpu_id = args.gpu
-    if gpu_id >= 0 and not torch.cuda.is_available():
-        logging.info('Requested gpu=%d but CUDA is unavailable; fallback to CPU/MPS where possible.', gpu_id)
-        gpu_id = -1
+    mode = os.environ.get('RETROPRO_DEVICE', 'auto').strip().lower()
+    cuda_ok = torch.cuda.is_available()
 
-    if gpu_id >= 0:
-        value_device = torch.device('cuda')
-    else:
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            value_device = torch.device('mps')
-            logging.info('Using MPS device for value model inference.')
+    one_step_device = -1
+    value_device = torch.device('cpu')
+
+    if mode == 'cpu':
+        one_step_device = -1
+        value_device = torch.device('cpu')
+    elif mode == 'cuda':
+        if args.gpu >= 0 and cuda_ok:
+            one_step_device = args.gpu
+            value_device = torch.device('cuda')
         else:
+            logging.info('RETROPRO_DEVICE=cuda but CUDA unavailable or gpu<0; fallback to CPU.')
+    else:
+        if args.gpu >= 0 and cuda_ok:
+            one_step_device = args.gpu
+            value_device = torch.device('cuda')
+        else:
+            one_step_device = -1
             value_device = torch.device('cpu')
-    return gpu_id, value_device
+
+    return one_step_device, value_device
 
 
 def _load_routes(test_routes):
@@ -108,8 +118,9 @@ def _build_value_fn(device):
 
 def _build_expand_batch_fn(one_step):
     topk = args.expansion_topk
+    disable_run_batch = os.environ.get('RETROPRO_DISABLE_RUN_BATCH', '0') == '1'
 
-    if hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
+    if (not disable_run_batch) and hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
         logging.info('One-step model supports run_batch; enabling batch expansion path.')
 
         def expand_batch(smiles_batch):
@@ -117,6 +128,8 @@ def _build_expand_batch_fn(one_step):
 
         return expand_batch
 
+    if disable_run_batch:
+        logging.info('RETROPRO_DISABLE_RUN_BATCH=1; forcing per-item expansion fallback.')
     logging.info('One-step model does not provide run_batch; fallback to per-item expansion.')
 
     def expand_batch(smiles_batch):
