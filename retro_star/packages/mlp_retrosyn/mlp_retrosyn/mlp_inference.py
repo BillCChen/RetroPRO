@@ -31,21 +31,54 @@ class MLPModel(object):
 
     def run(self, x, topk=10):
         arr = preprocess(x, self.fp_dim)
-        arr = np.reshape(arr,[-1, arr.shape[0]])
+        arr = np.reshape(arr, [-1, arr.shape[0]])
         arr = torch.tensor(arr, dtype=torch.float32)
         if self.device >= 0:
             arr = arr.to(self.device)
         preds = self.net(arr)
-        preds = F.softmax(preds,dim=1)
+        preds = F.softmax(preds, dim=1)
         if self.device >= 0:
             preds = preds.cpu()
-        probs, idx = torch.topk(preds,k=topk)
-        # probs = F.softmax(probs,dim=1)
+        probs, idx = torch.topk(preds, k=topk)
         rule_k = [self.idx2rules[id] for id in idx[0].numpy().tolist()]
+        row_probs = probs[0].detach().cpu().numpy().tolist()
+        return self._apply_template_rules(x, rule_k, row_probs)
+
+    def run_batch(self, x_list, topk=10):
+        if x_list is None or len(x_list) == 0:
+            return []
+
+        fps = []
+        for x in x_list:
+            arr = preprocess(x, self.fp_dim)
+            fps.append(arr)
+        fps = np.stack(fps, axis=0)
+
+        arr = torch.tensor(fps, dtype=torch.float32)
+        if self.device >= 0:
+            arr = arr.to(self.device)
+
+        preds = self.net(arr)
+        preds = F.softmax(preds, dim=1)
+        if self.device >= 0:
+            preds = preds.cpu()
+
+        probs, idx = torch.topk(preds, k=topk, dim=1)
+        probs = probs.detach().cpu().numpy()
+        idx = idx.detach().cpu().numpy()
+
+        outputs = []
+        for row_idx, x in enumerate(x_list):
+            rule_k = [self.idx2rules[id_] for id_ in idx[row_idx].tolist()]
+            row_probs = probs[row_idx].tolist()
+            outputs.append(self._apply_template_rules(x, rule_k, row_probs))
+        return outputs
+
+    def _apply_template_rules(self, x, rule_k, top_probs):
         reactants = []
         scores = []
         templates = []
-        for i , rule in enumerate(rule_k):
+        for i, rule in enumerate(rule_k):
             out1 = []
             try:
                 out1 = rdchiralRunText(rule, x)
@@ -55,12 +88,13 @@ class MLPModel(object):
                 out1 = sorted(out1)
                 for reactant in out1:
                     reactants.append(reactant)
-                    scores.append(probs[0][i].item()/len(out1))
+                    scores.append(float(top_probs[i]) / len(out1))
                     templates.append(rule)
             # out1 = rdchiralRunText(x, rule)
             except ValueError:
                 pass
-        if len(reactants) == 0: return None
+        if len(reactants) == 0:
+            return None
         reactants_d = defaultdict(list)
         for r, s, t in zip(reactants, scores, templates):
             if '.' in r:
@@ -72,9 +106,9 @@ class MLPModel(object):
         reactants, scores, templates = merge(reactants_d)
         total = sum(scores)
         scores = [s / total for s in scores]
-        return {'reactants':reactants,
-                'scores' : scores,
-                'template' : templates}
+        return {'reactants': reactants,
+                'scores': scores,
+                'template': templates}
 
 
 

@@ -75,6 +75,7 @@ parser.add_argument('--value_model', default='best_epoch_final_4.pt')
 parser.add_argument('--parallel_num', type=int, default=6, help='Number of parallel molecules')
 parser.add_argument('--parallel_expansions', type=int, default=1, help='Number of parallel expansions per molecule')
 parser.add_argument('--use_priority_queue', action='store_true', help='Use priority queue for node selection')
+parser.add_argument('--multi_pool', action='store_true', help='Enable fixed-width multi-molecule parallel planning')
     
 
 
@@ -102,6 +103,8 @@ standard_args ={
     'iterations': args.iterations,
     'expansion_topk': args.expansion_topk,
     'model type': args.one_step_type,
+    'multi pool': args.multi_pool,
+    'parallel num': args.parallel_num,
     'use CSS': args.CSS,
     'use DICT': args.DICT
 }
