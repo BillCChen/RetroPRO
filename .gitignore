@@ -8,3 +8,4 @@ one_step_model/
 *.ipynb
 __pycache__/
 .venv_multi/
+benchmark_reports/

@@ -168,3 +168,36 @@ No dependency on CUDA-required packages for core scheduler tests.
 3. Local synthetic tests pass without CUDA/datasets.
 4. Cloud run can toggle between serial and parallel via CLI.
 
+## 11. Benchmark Script (Test + Collect + Compare)
+
+新增脚本：
+
+1. `scripts/benchmark_compare.py`
+2. `scripts/run_benchmark_compare.sh`
+
+能力说明：
+
+1. 先执行预测试（`tests/scheduler_smoke_test.py` + `py_compile`）。
+2. 自动跑 A/B（serial + `parallel_num` 列表）并收集每次运行日志。
+3. 汇总 `plan.pkl` 指标并输出对比报告（Markdown + JSON）。
+4. 当传入 GPU 但本地无 CUDA 时，自动回退到 CPU（可通过 `--strict-gpu` 禁止）。
+
+最小运行示例（仓库根目录）：
+
+```bash
+bash scripts/run_benchmark_compare.sh \
+  --seed 42 \
+  --iterations 201 \
+  --expansion-topk 8 \
+  --one-step-type template_based \
+  --test-routes uspto190 \
+  --parallel-nums 5,8,10 \
+  --repeats 1
+```
+
+产物路径：
+
+1. 报告目录：`benchmark_reports/<timestamp>/`
+2. 汇总报告：`benchmark_report.md`
+3. 原始结构化数据：`benchmark_results.json`
+4. 每次运行日志：`logs/run_*.log`

@@ -4,7 +4,6 @@ import logging
 import sys
 sys.path.append("/home/chenqixuan/retro_star/retro_star/packages/mlp_retrosyn")
 from mlp_retrosyn.mlp_inference import MLPModel
-from mlp_retrosyn.tp_free_inference import TP_free_Model
 
 sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
 from alg import molstar
@@ -41,6 +40,7 @@ def prepare_mlp(templates, model_dump):
     one_step = MLPModel(model_dump, templates, device=-1)
     return one_step
 def prepare_r_smiles(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT):
+    from mlp_retrosyn.tp_free_inference import TP_free_Model
     logging.info('Loading trained R-SMILES model from %s' % retro_model_path)
     logging.info('Loading trained Forward model from %s' % forward_model_path)
     logging.info('CSS: %s' % CSS)

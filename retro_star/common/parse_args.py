@@ -3,6 +3,7 @@ import logging
 import os
 import torch
 import sys
+from datetime import datetime
 
 
 parser = argparse.ArgumentParser()
@@ -76,17 +77,19 @@ parser.add_argument('--parallel_num', type=int, default=6, help='Number of paral
 parser.add_argument('--parallel_expansions', type=int, default=1, help='Number of parallel expansions per molecule')
 parser.add_argument('--use_priority_queue', action='store_true', help='Use priority queue for node selection')
 parser.add_argument('--multi_pool', action='store_true', help='Enable fixed-width multi-molecule parallel planning')
-    
 
+# 输出目录参数允许外部覆盖；未提供时在解析后动态生成默认值。
+parser.add_argument('--result_folder', default=None)
+parser.add_argument('--viz_dir', default=None)
 
-
-import time
-time = time.strftime('%m%d_%H%M', time.localtime())
 args = parser.parse_args()
-profix = f'{args.test_routes}/{args.test_routes}_plan_{args.one_step_type}_iter{args.iterations}_topk{args.expansion_topk}_{time}'
-parser.add_argument('--result_folder', default=f'results/{profix}')
-parser.add_argument('--viz_dir', default=f'results/{profix}/viz')
-args = parser.parse_args()
+timestamp = datetime.now().strftime('%m%d_%H%M')
+profix = f'{args.test_routes}/{args.test_routes}_plan_{args.one_step_type}_iter{args.iterations}_topk{args.expansion_topk}_{timestamp}'
+if not args.result_folder:
+    args.result_folder = f'results/{profix}'
+if not args.viz_dir:
+    args.viz_dir = f'{args.result_folder}/viz'
+
 os.makedirs(args.result_folder, exist_ok=True)
 logging_path = os.path.join(args.result_folder, 'log.txt')
 logging.basicConfig(level=logging.INFO,
