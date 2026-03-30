@@ -227,6 +227,7 @@ bash scripts/run_benchmark_compare.sh \
 
 1. `scripts/benchmark_template_free_batch_impact.py`
 2. `scripts/run_template_free_batch_impact.sh`
+3. `scripts/run_local_template_free_batch_compare.sh`
 
 测试目标：
 
@@ -240,6 +241,14 @@ bash scripts/run_benchmark_compare.sh \
 2. `batch_wall_time_delta_sec`
 3. `batch_succ_count_delta`
 
+本地快速参数：
+
+1. `--max-targets N`：从目标集截取前 N 个分子，降低本地单次实验耗时。
+2. `run_local_template_free_batch_compare.sh` 默认：
+   - `max-targets=32`
+   - `iterations=80`
+   - `parallel-num=4`
+
 运行示例（服务器）：
 
 ```bash
@@ -252,4 +261,18 @@ bash scripts/run_template_free_batch_impact.sh \
   --test-routes uspto190 \
   --parallel-num 8 \
   --repeats 1
+```
+
+本地快速运行示例：
+
+```bash
+bash scripts/run_local_template_free_batch_compare.sh \
+  --parallel-num 6 \
+  --max-targets 64
+```
+
+若遇到 OpenNMT 在 `torch.load` 时报 `weights_only` 异常，可在当前环境执行：
+
+```bash
+python scripts/patch_onmt_weights_only.py
 ```

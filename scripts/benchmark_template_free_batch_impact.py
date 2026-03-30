@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iterations", type=int, default=201)
     p.add_argument("--expansion-topk", type=int, default=8)
     p.add_argument("--test-routes", default="uspto190")
+    p.add_argument("--max-targets", type=int, default=0, help="Use only first N targets from test-routes source")
     p.add_argument("--starting-molecules", default="dataset/origin_dict.csv")
     p.add_argument("--parallel-num", type=int, default=8)
     p.add_argument("--repeats", type=int, default=1)
@@ -152,8 +153,14 @@ def check_preflight(args: argparse.Namespace, repo_root: Path) -> List[str]:
     miss: List[str] = []
 
     route_path = ROUTE_FILE_MAP.get(args.test_routes)
-    if route_path:
+    if route_path is not None:
         rp = (retro_dir / route_path) if not os.path.isabs(route_path) else Path(route_path)
+        if not rp.exists():
+            miss.append(str(rp))
+    else:
+        rp = Path(args.test_routes)
+        if not rp.is_absolute():
+            rp = (retro_dir / rp).resolve()
         if not rp.exists():
             miss.append(str(rp))
 
@@ -172,6 +179,48 @@ def check_preflight(args: argparse.Namespace, repo_root: Path) -> List[str]:
             miss.append(str(p))
 
     return miss
+
+
+def extract_targets_from_route_source(repo_root: Path, test_routes: str) -> List[str]:
+    retro_dir = repo_root / "retro_star"
+    route_path = ROUTE_FILE_MAP.get(test_routes)
+    if route_path is not None:
+        path = (retro_dir / route_path) if not os.path.isabs(route_path) else Path(route_path)
+    else:
+        path = Path(test_routes)
+        if not path.is_absolute():
+            path = (retro_dir / path).resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(f"Route source not found: {path}")
+
+    if path.suffix == ".pkl":
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        if not data:
+            return []
+        first = data[0]
+        if isinstance(first, (list, tuple)):
+            return [str(item[0]).split(">")[0] for item in data]
+        if isinstance(first, str):
+            return [item.split(">")[0] for item in data]
+        raise ValueError(f"Unsupported route pickle format: {type(first)}")
+
+    targets: List[str] = []
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if ">" in line:
+            targets.append(line.split(">")[0])
+            continue
+        if "'" in line:
+            parts = line.split("'")
+            if len(parts) >= 2 and parts[1]:
+                targets.append(parts[1])
+                continue
+        targets.append(line)
+    return targets
 
 
 def run_pre_tests(args: argparse.Namespace, repo_root: Path, report_dir: Path) -> Dict[str, Dict[str, str]]:
@@ -412,6 +461,21 @@ def main() -> int:
 
     timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     report_dir = repo_root / args.report_root / timestamp
+
+    original_test_routes = args.test_routes
+    if args.max_targets > 0:
+        targets = extract_targets_from_route_source(repo_root, original_test_routes)
+        if len(targets) == 0:
+            print("[preflight] no targets available in route source; abort.")
+            return 6
+        capped = targets[: args.max_targets]
+        input_dir = report_dir / "inputs"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        subset_file = input_dir / f"targets_top{len(capped)}.txt"
+        subset_file.write_text("\n".join(capped) + "\n", encoding="utf-8")
+        args.test_routes = str(subset_file)
+        setattr(args, "test_routes_source", original_test_routes)
+        print(f"[preflight] max-targets enabled: {len(capped)} from {original_test_routes} -> {subset_file}")
 
     missing = check_preflight(args, repo_root)
     if missing:

@@ -42,7 +42,51 @@ def _resolve_runtime_config():
     return one_step_device, value_device
 
 
+def _wrap_targets_as_routes(targets):
+    return [[target + '>'] for target in targets if target]
+
+
+def _load_routes_from_file(route_file):
+    if route_file.endswith('.pkl'):
+        routes = pickle.load(open(route_file, 'rb'))
+        if len(routes) == 0:
+            return []
+        first = routes[0]
+        if isinstance(first, (list, tuple)):
+            logging.info('%d routes extracted from %s loaded', len(routes), route_file)
+            return routes
+        if isinstance(first, str):
+            targets = [x.split('>')[0] for x in routes]
+            wrapped = _wrap_targets_as_routes(targets)
+            logging.info('%d targets extracted from %s loaded', len(wrapped), route_file)
+            return wrapped
+        raise ValueError('Unsupported route pickle format: %s' % type(first))
+
+    targets = []
+    with open(route_file, 'r') as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            if '>' in line:
+                targets.append(line.split('>')[0])
+                continue
+            if "'" in line:
+                pieces = line.split("'")
+                if len(pieces) >= 2 and pieces[1]:
+                    targets.append(pieces[1])
+                    continue
+            targets.append(line)
+
+    wrapped = _wrap_targets_as_routes(targets)
+    logging.info('%d targets extracted from %s loaded', len(wrapped), route_file)
+    return wrapped
+
+
 def _load_routes(test_routes):
+    if os.path.exists(test_routes):
+        return _load_routes_from_file(test_routes)
+
     if test_routes == "uspto190":
         route_file = "dataset/routes_possible_test_hard.pkl"
         routes = pickle.load(open(route_file, 'rb'))
@@ -65,9 +109,7 @@ def _load_routes(test_routes):
         return [[line + '>'] for line in lines]
     if test_routes == "8XIK_NCI":
         file = "/home/chenqixuan/retro_star/retro_star/dataset/8XIK_NVI_PAI.txt"
-        with open(file, 'r') as f:
-            lines = [line.strip() for line in f.readlines()]
-        return [[line + '>'] for line in lines]
+        return _load_routes_from_file(file)
     raise ValueError("Unknown test routes dataset: %s" % test_routes)
 
 
