@@ -1,5 +1,7 @@
 import sys
 import types
+import tempfile
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -109,9 +111,35 @@ def test_run_delegates_to_run_batch():
     assert out == {'target': 'CCC', 'topk': 7}
 
 
+def test_dict_dump_behaviors():
+    model = object.__new__(TP_free_Model)
+    model.use_DICT = True
+    model.DICT = defaultdict(list)
+    model.dict_dump_every = 1
+    model.dict_dump_dir = tempfile.mkdtemp(prefix="tp_free_dump_")
+    model.dict_dump_on_exit = True
+    model._dict_update_count = 0
+    model._dict_dump_serial = 0
+
+    TP_free_Model.renew_DICT(model, [('A', 'rule1')])
+    first = sorted(Path(model.dict_dump_dir).glob("*.pkl"))
+    assert len(first) == 1
+
+    TP_free_Model.renew_DICT(model, [('A', 'rule2')])
+    second = sorted(Path(model.dict_dump_dir).glob("*.pkl"))
+    assert len(second) == 2
+
+    # force dump should always produce a snapshot when DICT has content
+    forced = TP_free_Model.finalize_dict_cache(model)
+    assert forced is not None
+    third = sorted(Path(model.dict_dump_dir).glob("*.pkl"))
+    assert len(third) == 3
+
+
 def main():
     test_run_batch_batches_model_calls()
     test_run_delegates_to_run_batch()
+    test_dict_dump_behaviors()
     print('tp_free_batch_smoke_test: PASS')
 
 

@@ -326,17 +326,29 @@ def retro_plan():
     if not os.path.exists(args.result_folder):
         os.mkdir(args.result_folder)
 
-    if args.multi_pool:
-        logging.info(
-            'Running multi-pool planner: pool=%d, iterations=%d, topk=%d',
-            args.parallel_num,
-            args.iterations,
-            args.expansion_topk,
-        )
-        return _run_parallel(target_mols, starting_mols, one_step, value_fn)
+    result = None
+    try:
+        if args.multi_pool:
+            logging.info(
+                'Running multi-pool planner: pool=%d, iterations=%d, topk=%d',
+                args.parallel_num,
+                args.iterations,
+                args.expansion_topk,
+            )
+            result = _run_parallel(target_mols, starting_mols, one_step, value_fn)
+        else:
+            logging.info('Running legacy serial planner.')
+            result = _run_serial(target_mols, starting_mols, one_step, value_fn)
+    finally:
+        if hasattr(one_step, 'finalize_dict_cache') and callable(one_step.finalize_dict_cache):
+            try:
+                dumped = one_step.finalize_dict_cache()
+                if dumped:
+                    logging.info('Final DICT cache dumped to %s', dumped)
+            except Exception as exc:
+                logging.info('Final DICT cache dump skipped due to error: %s', exc)
 
-    logging.info('Running legacy serial planner.')
-    return _run_serial(target_mols, starting_mols, one_step, value_fn)
+    return result
 
 
 if __name__ == '__main__':

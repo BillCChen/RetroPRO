@@ -40,6 +40,8 @@ class RunRecord:
     avg_final_nodes: Optional[float]
     result_folder: str
     plan_pkl: Optional[str]
+    dict_cache_dir: Optional[str]
+    dict_cache_pkl_count: int
     log_file: str
     command: str
 
@@ -68,6 +70,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-tests", action="store_true")
     p.add_argument("--strict-preflight", action="store_true")
     p.add_argument("--allow-fail-runs", action="store_true")
+    p.add_argument("--dict-dump-every", type=int, default=0, help="Enable DICT incremental dump every N new templates")
+    p.add_argument("--dict-dump-on-exit", action="store_true", help="Force DICT dump at process exit")
+    p.add_argument("--dict-dump-root", default="", help="Optional root dir for DICT cache dumps")
     p.add_argument("--report-root", default="benchmark_reports/template_free_batch")
     return p.parse_args()
 
@@ -308,15 +313,32 @@ def run_bench(args: argparse.Namespace, repo_root: Path, report_dir: Path) -> Li
             cmd = build_base_cmd(args)
             result_folder_rel = f"results/benchmarks_template_free_batch/{run_id}/{case_name}/repeat_{rep}"
             viz_dir_rel = f"{result_folder_rel}/viz"
+            dict_cache_dir_rel = None
 
             if pool_size is not None:
                 cmd.extend(["--multi_pool", "--parallel_num", str(pool_size)])
             cmd.extend(["--result_folder", result_folder_rel, "--viz_dir", viz_dir_rel])
 
+            run_env_patch = dict(env_patch or {})
+            if args.dict_dump_every > 0 or args.dict_dump_on_exit:
+                run_env_patch["TP_FREE_DICT_DUMP_EVERY"] = str(args.dict_dump_every)
+                run_env_patch["TP_FREE_DICT_DUMP_ON_EXIT"] = "1" if args.dict_dump_on_exit else "0"
+                if args.dict_dump_root:
+                    root = Path(args.dict_dump_root)
+                    dict_cache_dir_rel = str((root / run_id / case_name / f"repeat_{rep}").as_posix())
+                else:
+                    dict_cache_dir_rel = f"{result_folder_rel}/dict_cache"
+                run_env_patch["TP_FREE_DICT_DUMP_DIR"] = dict_cache_dir_rel
+
             logf = report_dir / "logs" / f"run_{case_name}_repeat_{rep}.log"
-            rc, wall = run_cmd(cmd, retro_dir, logf, env_patch=env_patch)
+            rc, wall = run_cmd(cmd, retro_dir, logf, env_patch=run_env_patch)
 
             plan_pkl = retro_dir / result_folder_rel / "plan.pkl"
+            dict_cache_count = 0
+            if dict_cache_dir_rel:
+                dict_dir_abs = retro_dir / dict_cache_dir_rel
+                if dict_dir_abs.exists():
+                    dict_cache_count = len(list(dict_dir_abs.glob("*.pkl")))
             m = collect_plan_metrics(repo_root, plan_pkl)
             rec = RunRecord(
                 case=case_name,
@@ -331,6 +353,8 @@ def run_bench(args: argparse.Namespace, repo_root: Path, report_dir: Path) -> Li
                 avg_final_nodes=m["avg_final_nodes"],
                 result_folder=result_folder_rel,
                 plan_pkl=str(plan_pkl) if plan_pkl.exists() else None,
+                dict_cache_dir=(str(retro_dir / dict_cache_dir_rel) if dict_cache_dir_rel else None),
+                dict_cache_pkl_count=dict_cache_count,
                 log_file=str(logf),
                 command=" ".join(shlex.quote(x) for x in cmd),
             )
@@ -445,7 +469,10 @@ def write_reports(args: argparse.Namespace, report_dir: Path, pre_tests: Dict[st
     lines.append("## Per-run Logs")
     lines.append("")
     for r in records:
-        lines.append(f"- `{r.case}` repeat={r.repeat}, rc={r.return_code}, wall={r.wall_time_sec:.3f}s, log=`{r.log_file}`")
+        lines.append(
+            f"- `{r.case}` repeat={r.repeat}, rc={r.return_code}, wall={r.wall_time_sec:.3f}s, "
+            f"dict_pkl={r.dict_cache_pkl_count}, log=`{r.log_file}`"
+        )
 
     (report_dir / "benchmark_report.md").write_text("\n".join(lines), encoding="utf-8")
 

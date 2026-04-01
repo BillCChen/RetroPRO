@@ -19,7 +19,6 @@ def merge(reactant_d):
     reactants, scores, templates = zip(*sorted(ret,key=lambda item : item[1], reverse=True))
     return list(reactants), list(scores), list(templates)
 import time
-day_hour_min_sec = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
 import pickle
 from .tp_free_tools import random_substructure,rand_aug_smiles,repeat_retro_k
 from .tp_free_tools import Load_Retro_Model, Load_Forward_Model
@@ -43,7 +42,9 @@ class TP_free_Model(object):
         self.mapper_batch_size = int(os.getenv("TP_FREE_MAPPER_BATCH_SIZE", "64"))
         self.dict_dump_every = int(os.getenv("TP_FREE_DICT_DUMP_EVERY", "0"))
         self.dict_dump_dir = os.getenv("TP_FREE_DICT_DUMP_DIR", "")
+        self.dict_dump_on_exit = os.getenv("TP_FREE_DICT_DUMP_ON_EXIT", "0") == "1"
         self._dict_update_count = 0
+        self._dict_dump_serial = 0
 
         gpu_device = int(device) if isinstance(device, int) and device >= 0 else -1
         self.retro_model = Load_Retro_Model(
@@ -66,6 +67,14 @@ class TP_free_Model(object):
             raise ImportError("rxnmapper is required for template_free inference. Please install `rxnmapper`.")
         self.mapper = BatchedMapper(batch_size=self.mapper_batch_size)
         logging.info("Loaded mapper with batch_size=%d", self.mapper_batch_size)
+        if self.dict_dump_every > 0 and self.dict_dump_dir:
+            logging.info(
+                "DICT incremental dump enabled: every=%d, dir=%s",
+                self.dict_dump_every,
+                self.dict_dump_dir,
+            )
+        if self.dict_dump_on_exit and self.dict_dump_dir:
+            logging.info("DICT exit dump enabled: dir=%s", self.dict_dump_dir)
     def random_sampling(self, x,RD_list,topk):
         """
         对输入分子x进行随机子结构采样，并通过随机SMILES增强生成多样化的候选反应物。
@@ -181,11 +190,49 @@ class TP_free_Model(object):
                 self.DICT[key].append(rule)
                 updated += 1
         self._dict_update_count += updated
-        if self.dict_dump_every > 0 and self._dict_update_count >= self.dict_dump_every and self.dict_dump_dir:
-            os.makedirs(self.dict_dump_dir, exist_ok=True)
-            save_dir = os.path.join(self.dict_dump_dir, f"tp_free_DICT_{day_hour_min_sec}.pkl")
-            pickle.dump(self.DICT, open(save_dir, 'wb'))
-            self._dict_update_count = 0
+
+        self.dump_dict_cache(force=False, reason="interval")
+
+    def _build_dict_dump_path(self, reason="snapshot"):
+        timestamp = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
+        self._dict_dump_serial += 1
+        pid = os.getpid()
+        return os.path.join(
+            self.dict_dump_dir,
+            f"tp_free_DICT_{timestamp}_{pid}_{self._dict_dump_serial:06d}_{reason}.pkl",
+        )
+
+    def dump_dict_cache(self, force=False, reason="manual"):
+        if not self.use_DICT:
+            return None
+        if not self.dict_dump_dir:
+            return None
+
+        if force:
+            should_dump = len(self.DICT) > 0
+        else:
+            should_dump = self.dict_dump_every > 0 and self._dict_update_count >= self.dict_dump_every
+
+        if not should_dump:
+            return None
+
+        os.makedirs(self.dict_dump_dir, exist_ok=True)
+        save_path = self._build_dict_dump_path(reason=reason)
+        with open(save_path, "wb") as f:
+            pickle.dump(dict(self.DICT), f)
+        logging.info(
+            "DICT cache dumped: %s (keys=%d, pending_updates=%d)",
+            save_path,
+            len(self.DICT),
+            self._dict_update_count,
+        )
+        self._dict_update_count = 0
+        return save_path
+
+    def finalize_dict_cache(self):
+        if not self.dict_dump_on_exit:
+            return None
+        return self.dump_dict_cache(force=True, reason="exit")
 
     def _canonicalize_target(self, x):
         try:
