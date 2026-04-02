@@ -1,203 +1,242 @@
-# RetroPRO Web 现状说明（readme_web）
+# 无 sudo 快速公网访问通用手册（readme_web）
 
-本文档基于当前仓库代码梳理 `RetroPRO` 的可视化前端网站实现情况，重点说明：
+本文档是一个与具体业务代码解耦的通用方案，目标是：
+- 在只有普通账号（无 sudo）时，快速把本地 Web 服务发布到公网可访问
+- 提供最小安全加固（认证 + 限流）
+- 方便后续任何项目直接复用
 
-1. 项目里已经有哪些 Web 端能力
-2. 前后端对应关系
-3. 如何启动
-4. 当前已知问题与改进建议
+## 1. 适用场景
 
-## 1. 项目当前的 Web 架构概览
+满足以下条件即可：
+- Linux 服务器可联网
+- 你有普通用户 shell 权限
+- 本地服务已经能在 `127.0.0.1:<PORT>` 正常访问
+- 可使用 `cloudflared`（PATH 中存在，或放在 `~/bin/cloudflared`）
 
-当前仓库中实际上有 **两套并行的 Web 方案**：
+## 2. 方案总览
 
-1. **方案 A：单次预测 + 结果可视化（同步接口）**
-   - 前端页面：`retro_star/static/index.html`
-   - 后端服务：`retro_star/main.py`
-   - 特点：直接调用预测接口，返回 task_id 后读取结果，可下载 JSON/HTML 路径图。
+最小链路：
+1. 应用进程（例如 `uvicorn` / `gunicorn` / `node`）
+2. `cloudflared tunnel --url http://127.0.0.1:<PORT>` 创建公网入口
+3. 应用层防护：Basic Auth + 接口限流
 
-2. **方案 B：任务队列式提交（异步任务 + worker）**
-   - 前端页面：`retro_star/frontend/index.html`
-   - 后端服务：`retro_star/backend/main.py`
-   - 任务执行器：`retro_star/backend/worker.py`
-   - 特点：前端提交任务到数据库，worker 轮询 pending 任务并调用 `run.sh` 计算。
+优点：
+- 不依赖 Nginx/systemd/防火墙规则，部署很快
 
-> 结论：仓库里不是“一个前端 + 一个后端”，而是两套页面/接口并存。
+限制：
+- Quick Tunnel 域名通常是临时的，重启后可能变化
+- 不适合高可靠生产长期 SLA
 
----
+## 3. 一次性准备
 
-## 2. 目录与文件对应关系
-
-### 2.1 前端页面
-
-- `retro_star/static/index.html`
-  - 与 `retro_star/main.py` 的 API 对齐
-  - 主要用于“直接预测 + 展示结果 + 路径图下载/内嵌”
-
-- `retro_star/static/index_copy.html`
-  - `static/index.html` 的副本版本（内容高度相似）
-
-- `retro_star/frontend/index.html`
-  - 与 `retro_star/backend/main.py` 的 API 对齐
-  - 主要用于“任务提交/轮询状态/结果下载”
-
-### 2.2 后端服务
-
-- `retro_star/main.py`
-  - FastAPI
-  - 面向 `static/index.html`
-  - 提供 `/api/predict`、`/api/result/{task_id}`、`/api/download_html/{task_id}`、`/api/preview-smiles` 等
-
-- `retro_star/backend/main.py`
-  - FastAPI
-  - 面向 `frontend/index.html`
-  - 提供 `/api/submit`、`/api/status/{task_id}`、`/api/download/{task_id}` 等
-
-- `retro_star/backend/worker.py`
-  - 后台 worker，轮询数据库中的 `pending` 任务
-  - 调用 `retro_star/run.sh` 执行计算并回写任务状态
-
-### 2.3 数据与运行产物
-
-- `retro_star/database/tasks.db`（运行时生成）
-- `retro_star/database/tasks.csv`（运行时生成）
-- `retro_star/results/`（结果与映射文件）
-- `retro_star/logs/worker.log`（worker 日志，运行时生成）
-
----
-
-## 3. 已有页面功能（按方案）
-
-## 3.1 方案 A（`static/index.html` + `main.py`）
-
-### 已实现
-
-1. SMILES 输入与参数配置
-   - iterations / expansion_topk / use_value_fn / one_step_type / CCS / radius / file_prefix
-2. 分子预览
-   - 调用 `/api/preview-smiles` 返回 base64 PNG 预览
-3. 提交预测
-   - 调用 `/api/predict`
-4. 结果读取
-   - 调用 `/api/result/{task_id}`
-5. 结果下载
-   - JSON 下载：`/api/download/{task_id}/json`
-   - HTML 路径图：`/api/download_html/{task_id}`
-6. 路径图内嵌
-   - 前端通过 iframe `srcdoc` 内嵌 HTML 可视化
-
-### 补充说明
-
-- `main.py` 中含有路径图 HTML 生成逻辑（把反应字符串转为图并生成可交互页面）。
-
-## 3.2 方案 B（`frontend/index.html` + `backend/main.py` + `worker.py`）
-
-### 已实现
-
-1. 任务提交表单（参数更全，含用户信息）
-2. 任务提交接口 `/api/submit`
-3. 任务状态轮询 `/api/status/{task_id}`
-4. 已完成任务下载 `/api/download/{task_id}?file_type=json`
-5. SQLite + CSV 双写存储任务参数/状态
-6. worker 后台轮询并执行 `run.sh`
-
-### 补充说明
-
-- `backend/main.py` 负责“排队与状态管理”。
-- 真正计算由 `worker.py -> run.sh` 触发。
-- 当前 `run.sh` 是占位脚本，输出的是模拟结果 JSON。
-
----
-
-## 4. API 对照（两套不可混用）
-
-### 4.1 方案 A API（`retro_star/main.py`）
-
-- `POST /api/predict`
-- `GET /api/result/{task_id}`
-- `GET /api/download_html/{task_id}`
-- `GET /api/download/{task_id}/{format_type}`
-- `POST /api/preview-smiles`
-- `GET /`（返回 `static/index.html`）
-
-### 4.2 方案 B API（`retro_star/backend/main.py`）
-
-- `POST /api/submit`
-- `GET /api/status/{task_id}`
-- `GET /api/download/{task_id}?file_type=json`
-- `GET /api/statistics`
-- `GET /api/health`
-- `GET /`（返回 `frontend/index.html`）
-
----
-
-## 5. 快速启动方式
-
-## 5.1 启动方案 A（直接预测页面）
+### 3.1 激活运行环境
 
 ```bash
-cd retro_star
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+conda activate <your_env>
+cd <your_project_root>
 ```
 
-打开：`http://127.0.0.1:8000`
-
-## 5.2 启动方案 B（任务队列页面）
-
-终端 1：
+### 3.2 安装基础依赖（按项目需要）
 
 ```bash
-cd retro_star
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+python -m pip install uvicorn fastapi
 ```
 
-终端 2：
+### 3.3 准备 cloudflared
 
 ```bash
-cd retro_star
-python backend/worker.py
+which cloudflared
 ```
 
-打开：`http://127.0.0.1:8000`
+如果没有：
+- 放置二进制到 `~/bin/cloudflared`
+- 并执行 `chmod +x ~/bin/cloudflared`
+
+## 4. 启动前自检（建议）
+
+先确认应用本地可用：
+
+```bash
+# 例：以 FastAPI + uvicorn 为例
+cd <app_dir>
+python -m uvicorn <module>:<app_object> --host 127.0.0.1 --port 18000
+```
+
+另开终端验证：
+
+```bash
+curl --noproxy '*' -i http://127.0.0.1:18000/
+```
+
+说明：
+- 若返回 `200`，服务就绪
+- 若返回 `401`（你开启了认证），也表示服务就绪
+- 若返回 `405` 且 `allow: GET`，通常只是你用了 `HEAD` 方法，不是服务挂掉
+
+## 5. 快速启动公网访问（无 sudo）
+
+## 5.1 推荐环境变量模板
+
+```bash
+export WEB_HOST=127.0.0.1
+export WEB_PORT=18000
+
+# 认证（建议开启）
+export WEB_BASIC_AUTH_ENABLED=true
+export WEB_BASIC_AUTH_USER=webuser
+export WEB_BASIC_AUTH_PASSWORD='请替换为强密码'
+
+# 限流（建议开启）
+export WEB_RATE_LIMIT_ENABLED=true
+export WEB_RATE_LIMIT_REQUESTS=6
+export WEB_RATE_LIMIT_WINDOW_SEC=60
+```
+
+## 5.2 启动应用 + 启动 tunnel（最小可复制版）
+
+```bash
+# 1) 启动应用（按你的项目实际命令替换）
+nohup python -m uvicorn <module>:<app_object> --host 127.0.0.1 --port 18000 \
+  > ./web_runtime/app.log 2>&1 &
+echo $! > ./web_runtime/app.pid
+
+# 2) 启动 cloudflared
+nohup cloudflared tunnel --url http://127.0.0.1:18000 \
+  > ./web_runtime/cloudflared.log 2>&1 &
+echo $! > ./web_runtime/cloudflared.pid
+
+# 3) 读取公网地址
+grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' ./web_runtime/cloudflared.log | tail -1
+```
+
+拿到 URL 后，可在手机 4G/5G 网络直接测试访问。
+
+## 6. 一键清理（建议固化脚本）
+
+核心动作：
+1. 杀应用进程（PID 文件）
+2. 杀 cloudflared 进程（PID 文件）
+3. 清理 PID 残留
+4. 可选保留日志
+
+最小命令：
+
+```bash
+kill "$(cat ./web_runtime/cloudflared.pid)" 2>/dev/null || true
+kill "$(cat ./web_runtime/app.pid)" 2>/dev/null || true
+rm -f ./web_runtime/cloudflared.pid ./web_runtime/app.pid
+```
+
+## 7. 最小安全基线（长期开放必做）
+
+1. Basic Auth
+- 建议至少要求用户名/密码
+
+2. 密码不要长期明文
+- 推荐存 SHA256（由应用侧比对哈希）
+
+示例：
+
+```bash
+WEB_PASS='你的强密码'
+WEB_PASS_SHA256="$(python - <<'PY' "$WEB_PASS"
+import hashlib, sys
+print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+PY
+)"
+unset WEB_PASS
+```
+
+3. 限流
+- 对高成本接口（如预测、生成）做 IP 级限流
+
+4. 监听地址
+- 建议应用仅监听 `127.0.0.1`
+- 对公网统一走 tunnel，不直接开放 `0.0.0.0`
+
+## 8. 常见问题排查
+
+### 8.1 `No module named uvicorn`
+
+```bash
+python -m pip install uvicorn
+```
+
+### 8.2 进程在但 `curl` 失败
+
+先排查代理变量：
+
+```bash
+env | grep -i proxy
+curl --noproxy '*' -i http://127.0.0.1:18000/
+```
+
+### 8.3 `ExecutableNotFound: dot`
+
+说明你开启了可视化功能，但系统缺少 Graphviz 可执行程序 `dot`。
+- 临时：关闭可视化参数
+- 需要可视化：安装 Graphviz binary（不仅是 Python graphviz 包）
+
+### 8.4 Tunnel 地址不通或失效
+
+Quick Tunnel 可能因网络抖动断开：
+- 重启 `cloudflared`
+- 重新读取新 URL
+
+### 8.5 本地健康但外网访问不了
+
+重点检查：
+- cloudflared 是否仍在运行
+- 是否拿到了新的 `trycloudflare.com` URL
+- 应用是否误退出（看 `app.log`）
+
+## 9. 迁移到新项目时只改三处
+
+1. 应用启动命令
+- 例如从 `uvicorn` 换成 `gunicorn` / `node` / `java -jar`
+
+2. 健康检查 URL
+- 根路径 `/` 或 `/health`
+
+3. 应用配置变量
+- 鉴权、限流、模型路径等变量名改为新项目约定
+
+## 10. 建议的脚本结构（可复制）
+
+```text
+web_scripts/
+  start_web.sh   # 启动应用 + tunnel + 输出公网 URL
+  clean_web.sh   # 杀进程 + 清理 pid
+  runtime/
+    app.pid
+    cloudflared.pid
+    app.log
+    cloudflared.log
+```
+
+建议 `start_web.sh` 具备：
+- 启动前先执行 `clean_web.sh`
+- readiness 检查（本地 HTTP 状态）
+- 自动解析并打印公网 URL
+
+## 11. 日常操作模板
+
+启动：
+
+```bash
+cd <your_project_root>
+conda activate <your_env>
+bash web_scripts/start_web.sh
+```
+
+停止：
+
+```bash
+cd <your_project_root>
+bash web_scripts/clean_web.sh
+```
 
 ---
 
-## 6. 当前代码状态与已知问题
-
-1. **双方案并存但未统一**
-   - `static/index.html` 与 `frontend/index.html` 使用不同接口体系。
-
-2. **`main.py` 存在硬编码数据路径**
-   - `prepare_starting_molecules('/home/chenqixuan/retro_star/retro_star/dataset/origin_dict.csv')`
-   - 在非该机器路径下可能导致启动失败。
-
-3. **方案 B 的计算脚本是占位实现**
-   - `retro_star/run.sh` 目前写明“模拟计算结果”，并非真实逆合成主流程。
-
-4. **方案 A 前端存在部分结果字段使用不一致风险**
-   - 页面中对 `data.route` 与 `data.result` 的使用存在混合写法，需按真实返回结构再统一。
-
-5. **缺少专门的 Web 文档与启动脚本编排**
-   - 当前 README 主要介绍算法训练/推理，未系统覆盖 Web 双方案。
-
----
-
-## 7. 建议的下一步（面向收敛）
-
-1. 先选定一个主方案（建议二选一）：
-   - 要“在线任务平台形态”就以 `backend/main.py + worker.py + frontend/index.html` 为主；
-   - 要“研究演示快速预测形态”就以 `main.py + static/index.html` 为主。
-
-2. 移除硬编码路径，统一为配置项或相对路径。
-
-3. 统一返回数据结构与前端渲染字段（尤其 route/result 字段）。
-
-4. 增加 Web 启动说明（可在主 README 增加“Web 模式”章节）。
-
-5. 若采用任务队列方案，将 `run.sh` 替换为真实计算入口（或直接调用 Python 主流程）。
-
----
-
-## 8. 一句话总结
-
-当前 `RetroPRO` 的可视化网站部分已经完成了两套可运行雏形（同步预测页 + 异步任务页），但仍处在“并行演进”状态，尚未收敛为统一、生产可维护的一套 Web 方案。
+一句话总结：
+**无 sudo 场景下，最实用的通用公网方案是“本地服务 + cloudflared tunnel + 应用层认证限流 + 一键清理脚本”。**
