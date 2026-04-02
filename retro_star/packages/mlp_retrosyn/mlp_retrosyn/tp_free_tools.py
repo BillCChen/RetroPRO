@@ -1,4 +1,5 @@
 import os
+import pickle
 import re
 
 try:
@@ -9,6 +10,34 @@ from types import SimpleNamespace
 from rdkit import Chem
 import random
 from collections import defaultdict, deque
+
+
+def _patch_onmt_torch_load_compat():
+    """Patch OpenNMT torch.load call for PyTorch>=2.6 compatibility.
+
+    OpenNMT 2.2 invokes torch.load without `weights_only`, while newer PyTorch
+    defaults to weights-only mode and can fail on legacy checkpoints.
+    """
+    try:
+        import onmt.model_builder as onmt_model_builder
+    except Exception:
+        return
+
+    if getattr(onmt_model_builder, "_retropro_torch_load_patched", False):
+        return
+
+    original_load = onmt_model_builder.torch.load
+
+    def _compat_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        if kwargs.get("pickle_module") is None:
+            kwargs["pickle_module"] = pickle
+        return original_load(*args, **kwargs)
+
+    onmt_model_builder.torch.load = _compat_load
+    onmt_model_builder._retropro_torch_load_patched = True
+
+
 def repeat_retro_k(smi_list, k):
     assert type(smi_list) == list
     out = []
@@ -155,6 +184,7 @@ class Load_Retro_Model:
     def __init__(self, model_path,beam_size=10, n_best=3, batch_size=25, gpu_device=0 ):
         if build_translator is None:
             raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
+        _patch_onmt_torch_load_compat()
         self.model_path = model_path
         self.gpu_device = gpu_device
         self.beam_size = beam_size
@@ -208,6 +238,7 @@ class Load_Forward_Model:
     def __init__(self, model_path,beam_size=10, n_best=1, batch_size=25, gpu_device=0 ):
         if build_translator is None:
             raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
+        _patch_onmt_torch_load_compat()
         self.model_path = model_path
         self.gpu_device = gpu_device
         self.beam_size = beam_size
