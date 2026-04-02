@@ -16,77 +16,23 @@ from alg.molstar_parallel import molstar_parallel
 
 
 def _resolve_runtime_config():
-    mode = os.environ.get('RETROPRO_DEVICE', 'auto').strip().lower()
-    cuda_ok = torch.cuda.is_available()
+    gpu_id = args.gpu
+    if gpu_id >= 0 and not torch.cuda.is_available():
+        logging.info('Requested gpu=%d but CUDA is unavailable; fallback to CPU/MPS where possible.', gpu_id)
+        gpu_id = -1
 
-    one_step_device = -1
-    value_device = torch.device('cpu')
-
-    if mode == 'cpu':
-        one_step_device = -1
-        value_device = torch.device('cpu')
-    elif mode == 'cuda':
-        if args.gpu >= 0 and cuda_ok:
-            one_step_device = args.gpu
-            value_device = torch.device('cuda')
-        else:
-            logging.info('RETROPRO_DEVICE=cuda but CUDA unavailable or gpu<0; fallback to CPU.')
+    if gpu_id >= 0:
+        value_device = torch.device('cuda')
     else:
-        if args.gpu >= 0 and cuda_ok:
-            one_step_device = args.gpu
-            value_device = torch.device('cuda')
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            value_device = torch.device('mps')
+            logging.info('Using MPS device for value model inference.')
         else:
-            one_step_device = -1
             value_device = torch.device('cpu')
-
-    return one_step_device, value_device
-
-
-def _wrap_targets_as_routes(targets):
-    return [[target + '>'] for target in targets if target]
-
-
-def _load_routes_from_file(route_file):
-    if route_file.endswith('.pkl'):
-        routes = pickle.load(open(route_file, 'rb'))
-        if len(routes) == 0:
-            return []
-        first = routes[0]
-        if isinstance(first, (list, tuple)):
-            logging.info('%d routes extracted from %s loaded', len(routes), route_file)
-            return routes
-        if isinstance(first, str):
-            targets = [x.split('>')[0] for x in routes]
-            wrapped = _wrap_targets_as_routes(targets)
-            logging.info('%d targets extracted from %s loaded', len(wrapped), route_file)
-            return wrapped
-        raise ValueError('Unsupported route pickle format: %s' % type(first))
-
-    targets = []
-    with open(route_file, 'r') as f:
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            if '>' in line:
-                targets.append(line.split('>')[0])
-                continue
-            if "'" in line:
-                pieces = line.split("'")
-                if len(pieces) >= 2 and pieces[1]:
-                    targets.append(pieces[1])
-                    continue
-            targets.append(line)
-
-    wrapped = _wrap_targets_as_routes(targets)
-    logging.info('%d targets extracted from %s loaded', len(wrapped), route_file)
-    return wrapped
+    return gpu_id, value_device
 
 
 def _load_routes(test_routes):
-    if os.path.exists(test_routes):
-        return _load_routes_from_file(test_routes)
-
     if test_routes == "uspto190":
         route_file = "dataset/routes_possible_test_hard.pkl"
         routes = pickle.load(open(route_file, 'rb'))
@@ -109,7 +55,9 @@ def _load_routes(test_routes):
         return [[line + '>'] for line in lines]
     if test_routes == "8XIK_NCI":
         file = "/home/chenqixuan/retro_star/retro_star/dataset/8XIK_NVI_PAI.txt"
-        return _load_routes_from_file(file)
+        with open(file, 'r') as f:
+            lines = [line.strip() for line in f.readlines()]
+        return [[line + '>'] for line in lines]
     raise ValueError("Unknown test routes dataset: %s" % test_routes)
 
 
@@ -160,9 +108,8 @@ def _build_value_fn(device):
 
 def _build_expand_batch_fn(one_step):
     topk = args.expansion_topk
-    disable_run_batch = os.environ.get('RETROPRO_DISABLE_RUN_BATCH', '0') == '1'
 
-    if (not disable_run_batch) and hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
+    if hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
         logging.info('One-step model supports run_batch; enabling batch expansion path.')
 
         def expand_batch(smiles_batch):
@@ -170,8 +117,6 @@ def _build_expand_batch_fn(one_step):
 
         return expand_batch
 
-    if disable_run_batch:
-        logging.info('RETROPRO_DISABLE_RUN_BATCH=1; forcing per-item expansion fallback.')
     logging.info('One-step model does not provide run_batch; fallback to per-item expansion.')
 
     def expand_batch(smiles_batch):
@@ -326,29 +271,17 @@ def retro_plan():
     if not os.path.exists(args.result_folder):
         os.mkdir(args.result_folder)
 
-    result = None
-    try:
-        if args.multi_pool:
-            logging.info(
-                'Running multi-pool planner: pool=%d, iterations=%d, topk=%d',
-                args.parallel_num,
-                args.iterations,
-                args.expansion_topk,
-            )
-            result = _run_parallel(target_mols, starting_mols, one_step, value_fn)
-        else:
-            logging.info('Running legacy serial planner.')
-            result = _run_serial(target_mols, starting_mols, one_step, value_fn)
-    finally:
-        if hasattr(one_step, 'finalize_dict_cache') and callable(one_step.finalize_dict_cache):
-            try:
-                dumped = one_step.finalize_dict_cache()
-                if dumped:
-                    logging.info('Final DICT cache dumped to %s', dumped)
-            except Exception as exc:
-                logging.info('Final DICT cache dump skipped due to error: %s', exc)
+    if args.multi_pool:
+        logging.info(
+            'Running multi-pool planner: pool=%d, iterations=%d, topk=%d',
+            args.parallel_num,
+            args.iterations,
+            args.expansion_topk,
+        )
+        return _run_parallel(target_mols, starting_mols, one_step, value_fn)
 
-    return result
+    logging.info('Running legacy serial planner.')
+    return _run_serial(target_mols, starting_mols, one_step, value_fn)
 
 
 if __name__ == '__main__':

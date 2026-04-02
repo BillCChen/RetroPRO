@@ -37,7 +37,6 @@ def prepare_starting_molecules(filename):
 def prepare_mlp(templates, model_dump, device=-1):
     logging.info('Templates: %s' % templates)
     logging.info('Loading trained mlp model from %s' % model_dump)
-    logging.info('MLP one-step device: %s', str(device))
     one_step = MLPModel(model_dump, templates, device=device)
     return one_step
 def prepare_r_smiles(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT, device=-1):
@@ -46,7 +45,6 @@ def prepare_r_smiles(retro_model_path,retro_topk,forward_model_path,forward_topk
     logging.info('Loading trained Forward model from %s' % forward_model_path)
     logging.info('CSS: %s' % CSS)
     logging.info('DICT: %s' % DICT)
-    logging.info('Template-free runtime device hint: %s', str(device))
     one_step = TP_free_Model(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT, device=device)
     return one_step
 def prepare_molstar_planner(one_step, value_fn, starting_mols, expansion_topk,

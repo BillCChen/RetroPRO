@@ -25,35 +25,19 @@ class MLPModel(object):
         self.fp_dim = fp_dim
         self.net, self.idx2rules = load_parallel_model(state_path,template_path, fp_dim)
         self.net.eval()
-        self.device = self._normalize_device(device)
-        self.net.to(self.device)
-
-    @staticmethod
-    def _normalize_device(device):
-        if isinstance(device, torch.device):
-            dev = device
-        elif isinstance(device, str):
-            if device.startswith('cuda'):
-                dev = torch.device(device)
-            else:
-                dev = torch.device('cpu')
-        elif isinstance(device, int):
-            dev = torch.device(f'cuda:{device}') if device >= 0 else torch.device('cpu')
-        else:
-            dev = torch.device('cpu')
-
-        if dev.type == 'cuda' and not torch.cuda.is_available():
-            return torch.device('cpu')
-        return dev
+        self.device = device
+        if device >= 0:
+            self.net.to(device)
 
     def run(self, x, topk=10):
         arr = preprocess(x, self.fp_dim)
         arr = np.reshape(arr, [-1, arr.shape[0]])
         arr = torch.tensor(arr, dtype=torch.float32)
-        arr = arr.to(self.device)
+        if self.device >= 0:
+            arr = arr.to(self.device)
         preds = self.net(arr)
         preds = F.softmax(preds, dim=1)
-        if preds.device.type != 'cpu':
+        if self.device >= 0:
             preds = preds.cpu()
         probs, idx = torch.topk(preds, k=topk)
         rule_k = [self.idx2rules[id] for id in idx[0].numpy().tolist()]
@@ -71,11 +55,12 @@ class MLPModel(object):
         fps = np.stack(fps, axis=0)
 
         arr = torch.tensor(fps, dtype=torch.float32)
-        arr = arr.to(self.device)
+        if self.device >= 0:
+            arr = arr.to(self.device)
 
         preds = self.net(arr)
         preds = F.softmax(preds, dim=1)
-        if preds.device.type != 'cpu':
+        if self.device >= 0:
             preds = preds.cpu()
 
         probs, idx = torch.topk(preds, k=topk, dim=1)
