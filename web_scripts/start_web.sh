@@ -44,7 +44,7 @@ STARTING_MOLS="${RETROTMP_STARTING_MOLS_PATH:-${APP_DIR}/dataset/origin_dict.csv
 
 AUTH_ENABLED="${RETROTMP_BASIC_AUTH_ENABLED:-true}"
 AUTH_USER="${RETROTMP_BASIC_AUTH_USER:-retropro}"
-AUTH_PASSWORD="${RETROTMP_BASIC_AUTH_PASSWORD:-}"
+AUTH_PASSWORD="${RETROTMP_BASIC_AUTH_PASSWORD:-!@#retropro2026}"
 AUTH_PASSWORD_SHA256="${RETROTMP_BASIC_AUTH_PASSWORD_SHA256:-}"
 
 RATE_LIMIT_ENABLED="${RETROTMP_PREDICT_RATE_LIMIT_ENABLED:-true}"
@@ -67,14 +67,17 @@ if is_true "${AUTH_ENABLED}"; then
     exit 1
   fi
   if [[ -z "${AUTH_PASSWORD}" && -z "${AUTH_PASSWORD_SHA256}" ]]; then
-    GENERATED_PASSWORD="$("${PYTHON_BIN}" - <<'PY'
+    if ! GENERATED_PASSWORD="$("${PYTHON_BIN}" - <<'PY'
 import secrets
 import string
 
 alphabet = string.ascii_letters + string.digits
 print("".join(secrets.choice(alphabet) for _ in range(16)))
 PY
-)"
+)"; then
+      echo "[error] failed to generate a random password; set RETROTMP_BASIC_AUTH_PASSWORD explicitly"
+      exit 1
+    fi
     AUTH_PASSWORD="${GENERATED_PASSWORD}"
   fi
 fi
