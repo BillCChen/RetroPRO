@@ -29,9 +29,11 @@ from collections import deque
 
 
 # 全局配置
-RESULT_DIR = "results"
+BASE_DIR = Path(__file__).resolve().parent
+RESULT_DIR = str(BASE_DIR / "results")
 os.makedirs(RESULT_DIR, exist_ok=True)
 MAPPING_FILE = os.path.join(RESULT_DIR, "file_mappings.json")  # 添加这一行
+STATIC_DIR = BASE_DIR / "static"
 
 # 初始化映射文件（如果不存在）
 if not os.path.exists(MAPPING_FILE):
@@ -620,12 +622,12 @@ async def preview_smiles(request: dict):
     except Exception as e:
         return {"valid": False, "error": f"处理出错: {str(e)}"}
 # 挂载静态文件
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def serve_frontend():
     """服务前端页面"""
-    return FileResponse("static/index.html")
+    return FileResponse(str(STATIC_DIR / "index.html"))
 
 if __name__ == "__main__":
     import uvicorn
