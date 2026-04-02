@@ -64,6 +64,15 @@ class _FakeForwardModel:
         return [f"fwd:{r}" for r in retro_list]
 
 
+class _FakeMapper:
+    def __init__(self):
+        self.calls = []
+
+    def map_reactions(self, reactions):
+        self.calls.append(list(reactions))
+        return list(reactions)  # pass-through; real format doesn't matter for stubs
+
+
 def test_run_batch_batches_model_calls():
     model = object.__new__(TP_free_Model)
     model.use_DICT = False
@@ -71,7 +80,10 @@ def test_run_batch_batches_model_calls():
     model.forward_topk = 1
     model.retro_model = _FakeRetroModel()
     model.forward_model = _FakeForwardModel()
-    model.DICT = {}
+    model.mapper = _FakeMapper()
+    # New internal attributes added after refactor
+    model._dict_ref = {}
+    model._dict_is_shared = False
     model._prepare_single_target = lambda x, topk: {
         'target': x,
         'aug_smiles': [f'{x}_1', f'{x}_2'],
@@ -81,7 +93,8 @@ def test_run_batch_batches_model_calls():
     model.filter = lambda target, smiles, retro, forward: [
         (target, f'{smiles[i]}>>{retro[i]}') for i in range(len(smiles))
     ]
-    model.extract_templates = lambda reactions: [('k', f'rule_{len(reactions)}')] if reactions else []
+    # Mirrors old extract_templates mock: returns one rule per reaction slice
+    model._extract_templates_from_mapped = lambda ccs, mapped: [('k', f'rule_{len(ccs)}')] if ccs else []
     model.renew_DICT = lambda templates: None
     model._rules_to_result = lambda target, rules: {
         'reactants': [target],
@@ -91,10 +104,14 @@ def test_run_batch_batches_model_calls():
 
     outputs = TP_free_Model.run_batch(model, ['A', 'B'], topk=8)
 
+    # Retro and forward models must each be called exactly once (batched across both molecules)
     assert len(model.retro_model.calls) == 1
     assert model.retro_model.calls[0] == ['A_1', 'A_2', 'B_1', 'B_2']
     assert len(model.forward_model.calls) == 1
     assert len(model.forward_model.calls[0]) == 4
+    # Mapper must be called exactly once across all molecules (Bug 2 fix)
+    assert len(model.mapper.calls) == 1
+    assert len(model.mapper.calls[0]) == 4  # 2 reactions per molecule × 2 molecules
     assert len(outputs) == 2
     assert outputs[0]['template'] == ['rule_2']
     assert outputs[1]['template'] == ['rule_2']

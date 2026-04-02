@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser()
 # for template free model test
 # python retro_plan_single.py --seed 42 --use_value_fn --expansion_topk 8 --one_step_type template_free --CSS --DICT --iterations 101 --viz --gpu 0 --test_routes self_defined
 # ===================== gpu id ===================== #
-parser.add_argument('--gpu', type=int, required=True)
+parser.add_argument('--gpu', type=int, default=-1, help='GPU ID for single-GPU mode; ignored when --gpu_list is set')
 
 # =================== random seed ================== #
 parser.add_argument('--seed', type=int, default=1234)

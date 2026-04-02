@@ -18,21 +18,10 @@ bash scripts/run_template_free_batch_impact.sh \
   --max-targets 190
 
 # 1b. Full benchmark (201 iters) — matches the original evaluation protocol
-bash scripts/run_template_free_batch_impact.sh \
-  --gpu 0 \
-  --parallel-num 64 \
-  --iterations 201 \
-  --max-targets 190
+bash scripts/run_template_free_batch_impact.sh --gpu 0 --parallel-num 64 --iterations 101 --max-targets 190
 
 # 1c. Fine-grained batch-size sweep via env vars (override defaults at runtime)
-TP_FREE_RETRO_BATCH_SIZE=256 \
-TP_FREE_FORWARD_BATCH_SIZE=256 \
-TP_FREE_MAPPER_BATCH_SIZE=128 \
-bash scripts/run_template_free_batch_impact.sh \
-  --gpu 0 \
-  --parallel-num 32 \
-  --iterations 50 \
-  --max-targets 190
+TP_FREE_RETRO_BATCH_SIZE=256 TP_FREE_FORWARD_BATCH_SIZE=256 TP_FREE_MAPPER_BATCH_SIZE=128 bash scripts/run_template_free_batch_impact.sh --gpu 0 --parallel-num 32 --iterations 50 --max-targets 190
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 2 — retro_plan.py: Template-Free Direct Calls
@@ -77,10 +66,10 @@ python retro_plan.py \
 #     (requires --gpu_list; --gpu is ignored when gpu_list is set)
 python retro_plan.py \
   --seed 42 --gpu 0 \
-  --gpu_list "0,1,2,3" \
+  --gpu_list "1,2,3" \
   --one_step_type template_free \
   --expansion_topk 8 \
-  --iterations 201 \
+  --iterations 50 \
   --CSS --DICT \
   --RD_list "[(7,2),(3,0)]" \
   --use_value_fn \
@@ -88,17 +77,8 @@ python retro_plan.py \
   --test_routes uspto190
 
 # 2e. Multi-GPU, 2 cards
-python retro_plan.py \
-  --seed 42 --gpu 0 \
-  --gpu_list "0,1" \
-  --one_step_type template_free \
-  --expansion_topk 8 \
-  --iterations 201 \
-  --CSS --DICT \
-  --RD_list "[(7,2),(3,0)]" \
-  --use_value_fn \
-  --parallel_num 64 \
-  --test_routes uspto190
+python retro_plan.py --seed 42 --gpu 0 --gpu_list "0,1,2,3" --one_step_type template_free --expansion_topk 8 --iterations 101 --CSS --DICT --RD_list "[(9,0),(5,0)]" --use_value_fn --parallel_num 64 --test_routes uspto190
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3 — retro_plan.py: Template-Based Direct Calls
