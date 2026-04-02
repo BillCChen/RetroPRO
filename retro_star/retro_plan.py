@@ -58,6 +58,42 @@ def _load_routes(test_routes):
         with open(file, 'r') as f:
             lines = [line.strip() for line in f.readlines()]
         return [[line + '>'] for line in lines]
+
+    # Allow benchmark wrappers to pass a concrete route file path.
+    if os.path.exists(test_routes):
+        route_file = test_routes
+        if route_file.endswith('.pkl'):
+            routes = pickle.load(open(route_file, 'rb'))
+            if not routes:
+                logging.info('0 routes extracted from %s loaded', route_file)
+                return []
+            first = routes[0]
+            if isinstance(first, str):
+                normalized = [[item if '>' in item else item + '>'] for item in routes]
+                logging.info('%d routes extracted from %s loaded', len(normalized), route_file)
+                return normalized
+            if isinstance(first, (list, tuple)):
+                logging.info('%d routes extracted from %s loaded', len(routes), route_file)
+                return routes
+            raise ValueError("Unsupported route pickle format in %s: %s" % (route_file, type(first)))
+
+        lines = []
+        with open(route_file, 'r', encoding='utf-8', errors='ignore') as f:
+            for raw in f.readlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                if '>' in line:
+                    target = line.split('>')[0]
+                elif "'" in line:
+                    parts = line.split("'")
+                    target = parts[1] if len(parts) > 1 and parts[1] else line
+                else:
+                    target = line
+                lines.append([target + '>'])
+        logging.info('%d routes extracted from %s loaded', len(lines), route_file)
+        return lines
+
     raise ValueError("Unknown test routes dataset: %s" % test_routes)
 
 
