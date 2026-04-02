@@ -1,0 +1,10 @@
+# Replace with the actual campus CIDRs provided by network admin.
+# Example placeholders only:
+allow 10.0.0.0/8;
+allow 172.16.0.0/12;
+allow 192.168.0.0/16;
+
+# Optional: add fixed trusted public IPs if needed.
+# allow 1.2.3.4/32;
+
+deny all;

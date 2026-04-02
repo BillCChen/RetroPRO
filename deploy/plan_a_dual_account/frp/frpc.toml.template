@@ -1,0 +1,11 @@
+serverAddr = "RELAY_SERVER_IP"
+serverPort = 7000
+auth.method = "token"
+auth.token = "REPLACE_WITH_STRONG_TOKEN"
+
+[[proxies]]
+name = "retropro-plan-a-http"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 80
+remotePort = 18080

@@ -1,0 +1,19 @@
+[Unit]
+Description=RetroPRO Plan A FastAPI Service
+After=network.target
+
+[Service]
+Type=simple
+User=APP_USER_PLACEHOLDER
+Group=APP_USER_PLACEHOLDER
+WorkingDirectory=APP_DIR_PLACEHOLDER
+EnvironmentFile=/etc/retropro-plan-a.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=${PYTHON_BIN} -m uvicorn main:app --host ${RETROTMP_HOST} --port ${RETROTMP_PORT}
+Restart=always
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
