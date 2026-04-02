@@ -180,7 +180,7 @@ def random_substructure(smiles, r=4, d=2, num=1):
     return smiles_list
 
 class Load_Retro_Model:
-    def __init__(self, model_path,beam_size=10, n_best=3, batch_size=25, gpu_device=0 ):
+    def __init__(self, model_path, beam_size=10, n_best=3, batch_size=512, gpu_device=0):
         if build_translator is None:
             raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
         self.model_path = model_path
@@ -234,7 +234,7 @@ class Load_Retro_Model:
         return translated
     
 class Load_Forward_Model:
-    def __init__(self, model_path,beam_size=10, n_best=1, batch_size=25, gpu_device=0 ):
+    def __init__(self, model_path, beam_size=10, n_best=1, batch_size=512, gpu_device=0):
         if build_translator is None:
             raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
         self.model_path = model_path

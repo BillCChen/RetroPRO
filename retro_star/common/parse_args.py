@@ -73,10 +73,11 @@ parser.add_argument('--value_model', default='best_epoch_final_4.pt')
 
 
 # 并行化参数
-parser.add_argument('--parallel_num', type=int, default=6, help='Number of parallel molecules')
+parser.add_argument('--parallel_num', type=int, default=64, help='Number of parallel molecules in pool scheduler')
 parser.add_argument('--parallel_expansions', type=int, default=1, help='Number of parallel expansions per molecule')
 parser.add_argument('--use_priority_queue', action='store_true', help='Use priority queue for node selection')
 parser.add_argument('--multi_pool', action='store_true', help='Enable fixed-width multi-molecule parallel planning')
+parser.add_argument('--gpu_list', default='', help='Comma-separated GPU IDs for multi-GPU data-parallel mode, e.g. "0,1,2,3". Overrides --gpu when set.')
 
 # 输出目录参数允许外部覆盖；未提供时在解析后动态生成默认值。
 parser.add_argument('--result_folder', default=None)

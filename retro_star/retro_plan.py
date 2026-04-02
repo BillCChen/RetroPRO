@@ -1,7 +1,9 @@
 import logging
+import multiprocessing as mp
 import os
 import pickle
 import random
+import sys
 import time
 
 import numpy as np
@@ -59,7 +61,6 @@ def _load_routes(test_routes):
             lines = [line.strip() for line in f.readlines()]
         return [[line + '>'] for line in lines]
 
-    # Allow benchmark wrappers to pass a concrete route file path.
     if os.path.exists(test_routes):
         route_file = test_routes
         if route_file.endswith('.pkl'):
@@ -102,7 +103,6 @@ def _build_one_step_model(runtime_gpu):
         return prepare_mlp(args.mlp_templates, args.mlp_model_dump, device=runtime_gpu)
     if args.one_step_type == "template_free":
         import ast
-
         args.RD_list = ast.literal_eval(args.RD_list)
         logging.info("Parsed RD_list: %s", args.RD_list)
         return prepare_r_smiles(
@@ -144,8 +144,9 @@ def _build_value_fn(device):
 
 def _build_expand_batch_fn(one_step):
     topk = args.expansion_topk
+    disable_batch = os.getenv('RETROPRO_DISABLE_RUN_BATCH', '0') == '1'
 
-    if hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
+    if not disable_batch and hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
         logging.info('One-step model supports run_batch; enabling batch expansion path.')
 
         def expand_batch(smiles_batch):
@@ -153,7 +154,7 @@ def _build_expand_batch_fn(one_step):
 
         return expand_batch
 
-    logging.info('One-step model does not provide run_batch; fallback to per-item expansion.')
+    logging.info('One-step model does not provide run_batch (or batch disabled); fallback to per-item expansion.')
 
     def expand_batch(smiles_batch):
         outputs = []
@@ -294,6 +295,212 @@ def _run_parallel(target_mols, starting_mols, one_step, value_fn):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Multi-GPU worker (must be a module-level function for multiprocessing pickle)
+# ---------------------------------------------------------------------------
+
+def _gpu_worker(
+    worker_idx,
+    gpu_id,
+    mol_slice,
+    idx_map,
+    starting_mols,
+    one_step_cfg,
+    shared_dict,
+    dict_lock,
+    result_pkl_path,
+    args_dict,
+):
+    """Per-GPU planning worker. Runs inside a separate process."""
+    # Set GPU visibility BEFORE any CUDA/torch import in this process.
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+
+    import logging as _log
+    import time as _time
+    import sys as _sys
+    import pickle as _pickle
+    import numpy as _np
+    import torch as _torch
+
+    retro_dir = os.path.dirname(os.path.abspath(__file__))
+    for _p in [retro_dir, os.path.join(retro_dir, 'packages', 'mlp_retrosyn')]:
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
+
+    _log.basicConfig(
+        level=_log.INFO,
+        format=f'%(asctime)s [GPU{gpu_id}] %(message)s',
+        datefmt='%m-%d %H:%M',
+    )
+
+    try:
+        # --- Value function ---
+        if args_dict.get('use_value_fn'):
+            from model import ValueMLP
+            from common.smiles_to_fp import smiles_to_fp as _smiles_to_fp
+            _device = _torch.device('cuda') if _torch.cuda.is_available() else _torch.device('cpu')
+            _vmodel = ValueMLP(
+                n_layers=args_dict['n_layers'],
+                fp_dim=args_dict['fp_dim'],
+                latent_dim=args_dict['latent_dim'],
+                dropout_rate=0.1,
+                device=_device,
+            ).to(_device)
+            _model_f = os.path.join(args_dict['save_folder'], args_dict['value_model'])
+            _vmodel.load_state_dict(_torch.load(_model_f, map_location=_device))
+            _vmodel.eval()
+
+            def value_fn(mol):
+                fp = _smiles_to_fp(mol, fp_dim=args_dict['fp_dim']).reshape(1, -1)
+                fp = _torch.FloatTensor(fp).to(_device)
+                return _vmodel(fp).item()
+        else:
+            value_fn = lambda x: 0.0
+
+        # --- One-step model with shared DICT ---
+        from mlp_retrosyn.tp_free_inference import TP_free_Model
+        _gpu_device = 0 if _torch.cuda.is_available() else -1
+        one_step = TP_free_Model(
+            retro_model_path=one_step_cfg['retro_model_path'],
+            retro_topk=one_step_cfg['retro_topk'],
+            forward_model_path=one_step_cfg['forward_model_path'],
+            forwad_topk=one_step_cfg['forward_topk'],
+            CCS=one_step_cfg['CSS'],
+            RD_list=one_step_cfg['RD_list'],
+            DICT=one_step_cfg['DICT'],
+            device=_gpu_device,
+            shared_dict=shared_dict,
+            dict_lock=dict_lock,
+        )
+
+        # --- Planning ---
+        from alg.molstar_parallel import molstar_parallel as _molstar_parallel
+
+        topk = args_dict.get('expansion_topk', 8)
+
+        def expand_batch(smiles_batch):
+            return one_step.run_batch(smiles_batch, topk=topk)
+
+        _t0 = _time.time()
+        finished = _molstar_parallel(
+            target_mols=mol_slice,
+            starting_mols=starting_mols,
+            expand_batch_fn=expand_batch,
+            value_fn=value_fn,
+            iterations=args_dict.get('iterations', 100),
+            pool_size=args_dict.get('parallel_num', 64),
+            viz=False,
+            viz_dir=None,
+        )
+        _elapsed = _time.time() - _t0
+
+        # --- Collect results keyed by original index ---
+        worker_result = []
+        for local_i, (orig_idx, output) in enumerate(zip(idx_map, finished)):
+            mol_elapsed = _elapsed * (local_i + 1) / max(len(mol_slice), 1)
+            if output is None:
+                worker_result.append((orig_idx, False, (None, args_dict.get('iterations', 100), None), mol_elapsed))
+            else:
+                succ, msg = output
+                worker_result.append((orig_idx, succ, msg, mol_elapsed))
+
+        os.makedirs(os.path.dirname(result_pkl_path), exist_ok=True)
+        with open(result_pkl_path, 'wb') as _f:
+            _pickle.dump(worker_result, _f)
+        _log.info('Worker %d done: %d molecules, elapsed=%.1fs', worker_idx, len(mol_slice), _elapsed)
+
+    except Exception as exc:
+        _log.error('Worker %d (GPU %d) failed: %s', worker_idx, gpu_id, exc, exc_info=True)
+        # Write an empty result so the orchestrator doesn't hang.
+        os.makedirs(os.path.dirname(result_pkl_path), exist_ok=True)
+        with open(result_pkl_path, 'wb') as _f:
+            _pickle.dump([], _f)
+
+
+def _run_multi_gpu(target_mols, starting_mols, one_step_cfg):
+    gpu_ids = [int(g.strip()) for g in args.gpu_list.split(',') if g.strip()]
+    n = len(gpu_ids)
+    num_targets = len(target_mols)
+
+    # Round-robin partition: worker i owns molecules i, i+n, i+2n, ...
+    mol_slices = [target_mols[i::n] for i in range(n)]
+    idx_maps = [list(range(i, num_targets, n)) for i in range(n)]
+
+    # Shared DICT across all workers via Manager
+    manager = mp.Manager()
+    shared_dict = manager.dict()
+    dict_lock = manager.Lock()
+
+    result_pkl_paths = [
+        os.path.join(args.result_folder, f'worker_{i}_result.pkl') for i in range(n)
+    ]
+
+    args_dict = vars(args)
+
+    logging.info('Launching %d GPU workers: gpu_ids=%s, molecules=%d', n, gpu_ids, num_targets)
+
+    processes = []
+    for i in range(n):
+        p = mp.Process(
+            target=_gpu_worker,
+            args=(
+                i,
+                gpu_ids[i],
+                mol_slices[i],
+                idx_maps[i],
+                starting_mols,
+                one_step_cfg,
+                shared_dict,
+                dict_lock,
+                result_pkl_paths[i],
+                args_dict,
+            ),
+            name=f'gpu-worker-{i}',
+        )
+        p.start()
+        processes.append(p)
+        logging.info('Started worker %d on GPU %d (%d molecules)', i, gpu_ids[i], len(mol_slices[i]))
+
+    for p in processes:
+        p.join()
+        if p.exitcode != 0:
+            logging.warning('Worker %s exited with code %d', p.name, p.exitcode)
+
+    # Merge results
+    t0 = time.time()
+    result = _init_result(num_targets)
+    for pkl_path in result_pkl_paths:
+        if not os.path.exists(pkl_path):
+            logging.warning('Worker result file missing: %s', pkl_path)
+            continue
+        with open(pkl_path, 'rb') as f:
+            worker_result = pickle.load(f)
+        for orig_idx, succ, msg, elapsed in worker_result:
+            _record_result(result, orig_idx, succ, msg, elapsed)
+
+    _save_plan(result)
+    succ_count = sum(1 for x in result['succ'] if x)
+    logging.info('Multi-GPU planning done: %d/%d succeeded', succ_count, num_targets)
+    return result
+
+
+def _build_one_step_cfg():
+    """Return a plain dict describing the one-step model config (picklable for workers)."""
+    import ast
+    rd_list = args.RD_list
+    if isinstance(rd_list, str):
+        rd_list = ast.literal_eval(rd_list)
+    return {
+        'retro_model_path': args.retro_model_path,
+        'retro_topk': args.retro_topk,
+        'forward_model_path': args.forward_model_path,
+        'forward_topk': args.forward_topk,
+        'CSS': args.CSS,
+        'RD_list': rd_list,
+        'DICT': args.DICT,
+    }
+
+
 def retro_plan():
     runtime_gpu, device = _resolve_runtime_config()
 
@@ -301,18 +508,25 @@ def retro_plan():
     routes = _load_routes(args.test_routes)
     target_mols = [route[0].split('>')[0] for route in routes]
 
-    one_step = _build_one_step_model(runtime_gpu)
-    value_fn = _build_value_fn(device)
-
     if not os.path.exists(args.result_folder):
         os.mkdir(args.result_folder)
+
+    # Multi-GPU path: build a config dict instead of loading the model in the main process.
+    if args.gpu_list and args.one_step_type == 'template_free':
+        logging.info(
+            'Multi-GPU mode: gpu_list=%s, pool=%d, iterations=%d, topk=%d',
+            args.gpu_list, args.parallel_num, args.iterations, args.expansion_topk,
+        )
+        one_step_cfg = _build_one_step_cfg()
+        return _run_multi_gpu(target_mols, starting_mols, one_step_cfg)
+
+    one_step = _build_one_step_model(runtime_gpu)
+    value_fn = _build_value_fn(device)
 
     if args.multi_pool:
         logging.info(
             'Running multi-pool planner: pool=%d, iterations=%d, topk=%d',
-            args.parallel_num,
-            args.iterations,
-            args.expansion_topk,
+            args.parallel_num, args.iterations, args.expansion_topk,
         )
         return _run_parallel(target_mols, starting_mols, one_step, value_fn)
 
@@ -321,6 +535,7 @@ def retro_plan():
 
 
 if __name__ == '__main__':
+    mp.set_start_method('spawn', force=True)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     random.seed(args.seed)
