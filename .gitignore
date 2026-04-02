@@ -9,3 +9,10 @@ one_step_model/
 __pycache__/
 .venv_multi/
 benchmark_reports/
+
+# Local AI assistant artifacts
+.claude/
+CLAUDE.md
+
+# Web runtime artifacts
+web_scripts/runtime/
