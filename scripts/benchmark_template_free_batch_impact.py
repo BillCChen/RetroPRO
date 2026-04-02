@@ -8,6 +8,7 @@ import json
 import os
 import pickle
 import shlex
+import shutil
 import statistics
 import subprocess
 import sys
@@ -480,11 +481,18 @@ def write_reports(args: argparse.Namespace, report_dir: Path, pre_tests: Dict[st
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
+    viz_requested = bool(args.viz)
 
     cuda_ok = detect_cuda_available(args.python, repo_root)
     if args.gpu >= 0 and cuda_ok is False:
         print(f"[gpu] requested gpu={args.gpu}, but CUDA is unavailable in {args.python}; fallback to cpu (--gpu -1).")
         args.gpu = -1
+
+    if args.viz and shutil.which("dot") is None:
+        print("[preflight] --viz requested but Graphviz executable `dot` is not found in PATH; disable viz for this run.")
+        args.viz = False
+    setattr(args, "viz_requested", viz_requested)
+    setattr(args, "viz_effective", bool(args.viz))
 
     timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     report_dir = repo_root / args.report_root / timestamp
