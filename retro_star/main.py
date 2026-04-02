@@ -9,6 +9,7 @@ import json
 import uuid
 import os
 from datetime import datetime
+from pathlib import Path
 from rdkit import Chem
 from rdkit.Chem import Draw
 import networkx as nx
@@ -269,19 +270,37 @@ class PredictionResponse(BaseModel):
 #         )
 #         img.save(output_path)
 # from common.prepare_utils import prepare_starting_molecules
-# st_mols = prepare_starting_molecules("/home/chenqixuan/retro_star/retro_star/dataset/origin_dict.csv")
+# st_mols = prepare_starting_molecules("dataset/origin_dict.csv")
 # 全局缓存变量，在应用启动时加载一次
 STARTING_MOLECULES_CACHE = None
 from common.prepare_utils import prepare_starting_molecules
 from contextlib import asynccontextmanager
+
+
+def _resolve_starting_molecules_path() -> str:
+    """Resolve starting molecules file path with env override."""
+    env_path = os.getenv("RETROTMP_STARTING_MOLS_PATH", "").strip()
+    if env_path:
+        candidate = Path(env_path).expanduser()
+    else:
+        candidate = Path(__file__).resolve().parent / "dataset" / "origin_dict.csv"
+
+    candidate = candidate.resolve()
+    if not candidate.exists():
+        raise FileNotFoundError(
+            "Starting molecules file not found. "
+            f"Set RETROTMP_STARTING_MOLS_PATH or ensure file exists at: {candidate}"
+        )
+    return str(candidate)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理（替代 @app.on_event）"""
     """应用启动时预加载起始分子库"""
     global STARTING_MOLECULES_CACHE
-    # 根据你的实际路径调整
-    STARTING_MOLECULES_CACHE = prepare_starting_molecules(
-        '/home/chenqixuan/retro_star/retro_star/dataset/origin_dict.csv')
+    starting_molecules_path = _resolve_starting_molecules_path()
+    STARTING_MOLECULES_CACHE = prepare_starting_molecules(starting_molecules_path)
     print(f"✅ 已预加载 {len(STARTING_MOLECULES_CACHE)} 个起始分子")
     yield  # 应用运行中
     
@@ -498,7 +517,9 @@ async def serve_frontend():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    host = os.getenv("RETROTMP_HOST", "127.0.0.1")
+    port = int(os.getenv("RETROTMP_PORT", "18000"))
+    uvicorn.run(app, host=host, port=port)
 
 
     # C[C@@H]1Cn2nc(OCc3ccccc3)cc2CN1C(=O)c1ccc(F)cc1
