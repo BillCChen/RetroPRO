@@ -67,7 +67,14 @@ if is_true "${AUTH_ENABLED}"; then
     exit 1
   fi
   if [[ -z "${AUTH_PASSWORD}" && -z "${AUTH_PASSWORD_SHA256}" ]]; then
-    GENERATED_PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)"
+    GENERATED_PASSWORD="$("${PYTHON_BIN}" - <<'PY'
+import secrets
+import string
+
+alphabet = string.ascii_letters + string.digits
+print("".join(secrets.choice(alphabet) for _ in range(16)))
+PY
+)"
     AUTH_PASSWORD="${GENERATED_PASSWORD}"
   fi
 fi
