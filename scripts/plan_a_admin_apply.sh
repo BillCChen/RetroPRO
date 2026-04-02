@@ -8,11 +8,14 @@ Usage:
     --repo-dir /abs/path/RetroPRO \
     --app-user <app_user> \
     --app-dir /abs/path/RetroPRO/retro_star \
-    --python-bin /abs/path/venv/bin/python \
     --starting-mols /abs/path/RetroPRO/retro_star/dataset/origin_dict.csv \
     [--campus-cidr 10.0.0.0/8 --campus-cidr 172.16.0.0/12 ...] \
     [--basic-auth-user <name> --basic-auth-pass <pass>] \
     [--skip-ufw]
+
+Optional:
+  --python-bin /abs/path/venv/bin/python
+  If omitted, script will use `python` from current PATH.
 
 Notes:
   1) Provide at least one --campus-cidr OR basic auth credentials.
@@ -86,10 +89,17 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${REPO_DIR}" || -z "${APP_USER}" || -z "${APP_DIR}" || -z "${PYTHON_BIN}" || -z "${STARTING_MOLS}" ]]; then
+if [[ -z "${REPO_DIR}" || -z "${APP_USER}" || -z "${APP_DIR}" || -z "${STARTING_MOLS}" ]]; then
   echo "[error] missing required arguments"
   usage
   exit 1
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python || true)"
+fi
+if [[ -z "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python3 || true)"
 fi
 
 if [[ ! -d "${REPO_DIR}" ]]; then

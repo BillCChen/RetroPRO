@@ -6,8 +6,11 @@ usage() {
 Usage:
   bash scripts/plan_a_app_boot_check.sh \
     --app-dir /abs/path/RetroPRO/retro_star \
-    --python-bin /abs/path/venv/bin/python \
     --starting-mols /abs/path/RetroPRO/retro_star/dataset/origin_dict.csv
+
+Optional:
+  --python-bin /abs/path/venv/bin/python
+  If omitted, script will use `python` from current PATH.
 USAGE
 }
 
@@ -41,10 +44,17 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${APP_DIR}" || -z "${PYTHON_BIN}" || -z "${STARTING_MOLS}" ]]; then
+if [[ -z "${APP_DIR}" || -z "${STARTING_MOLS}" ]]; then
   echo "[error] missing required args"
   usage
   exit 1
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python || true)"
+fi
+if [[ -z "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python3 || true)"
 fi
 
 if [[ ! -d "${APP_DIR}" ]]; then

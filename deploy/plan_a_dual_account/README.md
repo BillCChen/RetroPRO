@@ -49,9 +49,10 @@ curl -sS -X POST http://127.0.0.1:18000/api/preview-smiles \
 ```bash
 bash "$REPO_DIR/scripts/plan_a_app_boot_check.sh" \
   --app-dir "$APP_DIR" \
-  --python-bin "$PYTHON_BIN" \
   --starting-mols "$STARTING_MOLS"
 ```
+
+说明：若你已激活正确 conda 环境，可省略 `--python-bin`；否则建议显式传入。
 
 ## 3. 管理员账号步骤（有 sudo）
 
@@ -62,7 +63,6 @@ sudo bash "$REPO_DIR/scripts/plan_a_admin_apply.sh" \
   --repo-dir "$REPO_DIR" \
   --app-user "$APP_USER" \
   --app-dir "$APP_DIR" \
-  --python-bin "$PYTHON_BIN" \
   --starting-mols "$STARTING_MOLS" \
   --campus-cidr 10.0.0.0/8 \
   --campus-cidr 172.16.0.0/12
@@ -75,11 +75,12 @@ sudo bash "$REPO_DIR/scripts/plan_a_admin_apply.sh" \
   --repo-dir "$REPO_DIR" \
   --app-user "$APP_USER" \
   --app-dir "$APP_DIR" \
-  --python-bin "$PYTHON_BIN" \
   --starting-mols "$STARTING_MOLS" \
   --basic-auth-user retropro \
   --basic-auth-pass 'CHANGE_ME_STRONG_PASSWORD'
 ```
+
+说明：管理员脚本同样支持省略 `--python-bin`，会自动使用当前 `PATH` 中的 `python`。
 
 ## 3.1 systemd
 
