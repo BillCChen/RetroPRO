@@ -10,7 +10,7 @@ if [[ "${1:-}" == "--run-predict" ]]; then
 fi
 
 echo "[check] app root: ${APP_URL}/"
-curl -fsS -I "${APP_URL}/" >/dev/null
+curl -fsS "${APP_URL}/" >/dev/null
 
 echo "[check] preview-smiles"
 preview_resp="$(curl -fsS -X POST "${APP_URL}/api/preview-smiles" \
@@ -26,7 +26,7 @@ print("[ok] preview-smiles valid")
 PY
 
 echo "[check] edge root: ${EDGE_URL}/"
-curl -fsS -I "${EDGE_URL}/" >/dev/null
+curl -fsS "${EDGE_URL}/" >/dev/null
 
 if [[ "${RUN_PREDICT}" == "true" ]]; then
   echo "[check] predict flow (this may take time)"
