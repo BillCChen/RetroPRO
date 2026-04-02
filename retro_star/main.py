@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi import Query
 from pydantic import BaseModel
 # from retro_star.api import RSPlanner
@@ -10,6 +10,10 @@ import uuid
 import os
 from datetime import datetime
 from pathlib import Path
+import hashlib
+import secrets
+import threading
+import time
 from rdkit import Chem
 from rdkit.Chem import Draw
 import networkx as nx
@@ -277,6 +281,89 @@ from common.prepare_utils import prepare_starting_molecules
 from contextlib import asynccontextmanager
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_basic_auth_credentials(auth_header: str) -> Tuple[str, str]:
+    """Parse Basic auth header and return (username, password)."""
+    if not auth_header:
+        return "", ""
+    if not auth_header.startswith("Basic "):
+        return "", ""
+    token = auth_header[len("Basic "):].strip()
+    try:
+        decoded = base64.b64decode(token).decode("utf-8")
+    except Exception:
+        return "", ""
+    if ":" not in decoded:
+        return "", ""
+    username, password = decoded.split(":", 1)
+    return username, password
+
+
+def _request_client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _build_auth_guard():
+    # Authentication is enabled only when username is set.
+    auth_user = os.getenv("RETROTMP_BASIC_AUTH_USER", "").strip()
+    auth_password = os.getenv("RETROTMP_BASIC_AUTH_PASSWORD", "")
+    auth_password_sha256 = os.getenv("RETROTMP_BASIC_AUTH_PASSWORD_SHA256", "").strip().lower()
+    auth_enabled = _env_bool("RETROTMP_BASIC_AUTH_ENABLED", bool(auth_user))
+
+    def is_authorized(request: Request) -> bool:
+        if not auth_enabled:
+            return True
+        if not auth_user:
+            return False
+        req_user, req_password = _parse_basic_auth_credentials(request.headers.get("authorization", ""))
+        if not req_user:
+            return False
+        if not secrets.compare_digest(req_user, auth_user):
+            return False
+        if auth_password_sha256:
+            req_hash = hashlib.sha256(req_password.encode("utf-8")).hexdigest()
+            return secrets.compare_digest(req_hash, auth_password_sha256)
+        return secrets.compare_digest(req_password, auth_password)
+
+    return is_authorized, auth_enabled
+
+
+def _build_predict_rate_limiter():
+    enabled = _env_bool("RETROTMP_PREDICT_RATE_LIMIT_ENABLED", True)
+    max_requests = int(os.getenv("RETROTMP_PREDICT_RATE_LIMIT_REQUESTS", "6"))
+    window_sec = int(os.getenv("RETROTMP_PREDICT_RATE_LIMIT_WINDOW_SEC", "60"))
+    bucket: Dict[str, deque] = defaultdict(deque)
+    lock = threading.Lock()
+
+    def check(request: Request) -> Tuple[bool, int]:
+        if not enabled:
+            return True, 0
+        now = time.monotonic()
+        ip = _request_client_ip(request)
+        with lock:
+            q = bucket[ip]
+            while q and now - q[0] > window_sec:
+                q.popleft()
+            if len(q) >= max_requests:
+                retry_after = max(1, int(window_sec - (now - q[0])))
+                return False, retry_after
+            q.append(now)
+        return True, 0
+
+    return check
+
+
 def _resolve_starting_molecules_path() -> str:
     """Resolve starting molecules file path with env override."""
     env_path = os.getenv("RETROTMP_STARTING_MOLS_PATH", "").strip()
@@ -311,9 +398,34 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RetroTMP 逆合成预测平台",
     lifespan=lifespan  
 )
+
+_auth_guard, _auth_enabled = _build_auth_guard()
+_predict_rate_limiter = _build_predict_rate_limiter()
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # Optional Basic Auth guard for all routes.
+    if not _auth_guard(request):
+        return PlainTextResponse(
+            "Unauthorized",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            headers={"WWW-Authenticate": 'Basic realm="RetroPRO"'},
+        )
+    return await call_next(request)
+
+
 @app.post("/api/predict", response_model=PredictionResponse)
-async def predict_route(request: PredictionRequest):
+async def predict_route(request: PredictionRequest, raw_request: Request):
     """启动逆合成预测任务"""
+    allowed, retry_after = _predict_rate_limiter(raw_request)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many predict requests. Retry after {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     task_id = str(uuid.uuid4())
     # 生成带前缀的文件名
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
