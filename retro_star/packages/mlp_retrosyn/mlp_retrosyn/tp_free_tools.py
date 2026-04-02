@@ -1,6 +1,7 @@
 import os
 import pickle
 import re
+from contextlib import contextmanager
 
 try:
     from onmt.translate.translator import build_translator
@@ -12,21 +13,16 @@ import random
 from collections import defaultdict, deque
 
 
-def _patch_onmt_torch_load_compat():
-    """Patch OpenNMT torch.load call for PyTorch>=2.6 compatibility.
-
-    OpenNMT 2.2 invokes torch.load without `weights_only`, while newer PyTorch
-    defaults to weights-only mode and can fail on legacy checkpoints.
-    """
+@contextmanager
+def _onmt_torch_load_compat_context():
+    """Temporarily patch torch.load for OpenNMT 2.2 + PyTorch>=2.6."""
     try:
-        import onmt.model_builder as onmt_model_builder
+        import torch
     except Exception:
+        yield
         return
 
-    if getattr(onmt_model_builder, "_retropro_torch_load_patched", False):
-        return
-
-    original_load = onmt_model_builder.torch.load
+    original_load = torch.load
 
     def _compat_load(*args, **kwargs):
         kwargs.setdefault("weights_only", False)
@@ -34,8 +30,11 @@ def _patch_onmt_torch_load_compat():
             kwargs["pickle_module"] = pickle
         return original_load(*args, **kwargs)
 
-    onmt_model_builder.torch.load = _compat_load
-    onmt_model_builder._retropro_torch_load_patched = True
+    torch.load = _compat_load
+    try:
+        yield
+    finally:
+        torch.load = original_load
 
 
 def repeat_retro_k(smi_list, k):
@@ -184,7 +183,6 @@ class Load_Retro_Model:
     def __init__(self, model_path,beam_size=10, n_best=3, batch_size=25, gpu_device=0 ):
         if build_translator is None:
             raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
-        _patch_onmt_torch_load_compat()
         self.model_path = model_path
         self.gpu_device = gpu_device
         self.beam_size = beam_size
@@ -203,7 +201,8 @@ class Load_Retro_Model:
             shard_size=0,output="/root/z-trash/onmt_out.txt",fp32=False,int8=False,
         )
         
-        self.inference_model = build_translator(opt, report_score=False, out_file=open(os.devnull, "w"))
+        with _onmt_torch_load_compat_context():
+            self.inference_model = build_translator(opt, report_score=False, out_file=open(os.devnull, "w"))
         
     def smi_tokenizer(self,smi):
         pattern = "(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
@@ -238,7 +237,6 @@ class Load_Forward_Model:
     def __init__(self, model_path,beam_size=10, n_best=1, batch_size=25, gpu_device=0 ):
         if build_translator is None:
             raise ImportError("OpenNMT-py is required for template_free inference. Please install `OpenNMT-py==2.2.0`.")
-        _patch_onmt_torch_load_compat()
         self.model_path = model_path
         self.gpu_device = gpu_device
         self.beam_size = beam_size
@@ -296,7 +294,8 @@ class Load_Forward_Model:
     
 
         # 构建 Translator（只加载一次）
-        self.inference_model = build_translator(opt, report_score=False, out_file=open(os.devnull, "w"))
+        with _onmt_torch_load_compat_context():
+            self.inference_model = build_translator(opt, report_score=False, out_file=open(os.devnull, "w"))
 
     def smi_tokenizer(self,smi):
         if smi == '':
