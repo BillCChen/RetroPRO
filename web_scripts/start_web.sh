@@ -44,7 +44,7 @@ STARTING_MOLS="${RETROTMP_STARTING_MOLS_PATH:-${APP_DIR}/dataset/origin_dict.csv
 
 AUTH_ENABLED="${RETROTMP_BASIC_AUTH_ENABLED:-true}"
 AUTH_USER="${RETROTMP_BASIC_AUTH_USER:-retropro}"
-AUTH_PASSWORD="${RETROTMP_BASIC_AUTH_PASSWORD:-!@#retropro2026}"
+AUTH_PASSWORD="${RETROTMP_BASIC_AUTH_PASSWORD:-retropro2026}"
 AUTH_PASSWORD_SHA256="${RETROTMP_BASIC_AUTH_PASSWORD_SHA256:-}"
 
 RATE_LIMIT_ENABLED="${RETROTMP_PREDICT_RATE_LIMIT_ENABLED:-true}"
@@ -60,25 +60,15 @@ if [[ ! -f "${STARTING_MOLS}" ]]; then
   exit 1
 fi
 
-GENERATED_PASSWORD=""
 if is_true "${AUTH_ENABLED}"; then
   if [[ -z "${AUTH_USER}" ]]; then
     echo "[error] RETROTMP_BASIC_AUTH_USER is empty while auth is enabled"
     exit 1
   fi
   if [[ -z "${AUTH_PASSWORD}" && -z "${AUTH_PASSWORD_SHA256}" ]]; then
-    if ! GENERATED_PASSWORD="$("${PYTHON_BIN}" - <<'PY'
-import secrets
-import string
-
-alphabet = string.ascii_letters + string.digits
-print("".join(secrets.choice(alphabet) for _ in range(16)))
-PY
-)"; then
-      echo "[error] failed to generate a random password; set RETROTMP_BASIC_AUTH_PASSWORD explicitly"
-      exit 1
-    fi
-    AUTH_PASSWORD="${GENERATED_PASSWORD}"
+    echo "[error] auth is enabled but no password is configured"
+    echo "[info] set RETROTMP_BASIC_AUTH_PASSWORD or RETROTMP_BASIC_AUTH_PASSWORD_SHA256"
+    exit 1
   fi
 fi
 
@@ -164,10 +154,10 @@ echo "[info] public URL: ${TUNNEL_URL}"
 
 if is_true "${AUTH_ENABLED}"; then
   echo "[info] basic auth user: ${AUTH_USER}"
-  if [[ -n "${AUTH_PASSWORD}" ]]; then
-    echo "[info] basic auth password: ${AUTH_PASSWORD}"
-  else
+  if [[ -n "${AUTH_PASSWORD_SHA256}" ]]; then
     echo "[info] basic auth password: (not printed; using SHA256 env value)"
+  else
+    echo "[info] basic auth password: ${AUTH_PASSWORD}"
   fi
 fi
 

@@ -13,6 +13,7 @@ benchmark_reports/
 # Local AI assistant artifacts
 .claude/
 CLAUDE.md
+base-claude.md
 
 # Web runtime artifacts
 web_scripts/runtime/

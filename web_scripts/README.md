@@ -7,8 +7,10 @@
   - `uvicorn`（默认 `0.0.0.0:18000`）
   - `cloudflared quick tunnel`
 - 在终端打印可访问公网 URL（`trycloudflare`）
-- 默认启用 Basic Auth（用户 `retropro`）
-  - 如果未设置密码，会自动生成 16 位随机密码并打印
+- 默认启用 Basic Auth
+  - 默认用户名：`retropro`
+  - 默认密码：`retropro2026`
+  - 可通过环境变量覆盖
 
 2. `clean_web.sh`
 - 一键停止本项目相关 `uvicorn/cloudflared` 进程
