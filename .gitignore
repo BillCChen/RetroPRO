@@ -17,3 +17,6 @@ base-claude.md
 
 # Web runtime artifacts
 web_scripts/runtime/
+*.pid
+
+*.log

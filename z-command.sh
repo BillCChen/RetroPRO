@@ -27,3 +27,6 @@ python retro_plan.py --seed 42 --use_value_fn --viz --gpu 0 \
 --expansion_topk 8 --iterations 101 \
 --one_step_type template_free  \
 --test_routes pth_hard
+
+
+bash scripts/run_template_free_batch_impact.sh  --gpu 0 --seed 42 --iterations 10 --expansion-topk 8  --max-targets 10 --test-routes uspto190 --parallel-num 4 --repeats 1  --rd-list "[(7,2),(3,0)]"

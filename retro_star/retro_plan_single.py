@@ -101,7 +101,9 @@ def retro_plan():
     # smiles_list = ['NC1=NC=CC=C1C2=CSC(C(C=C3)=CC=C3OCC4=CC=CC=N4)=N2']
     # smiles_list = ['O=C(C1=C(C2C3C(C(O)=O)=CN2)C=CC=C1)C3=O']
     # 2026 年 1 月 27 日 21:15:21
-    smiles_list = ['NC1=NC=CC=C1N2N=CC(C3=CC=C(N=C(N4C)OC5=CC=CC=N5)C4=C3)=C2']
+    # smiles_list = ['NC1=NC=CC=C1N2N=CC(C3=CC=C(N=C(N4C)OC5=CC=CC=N5)C4=C3)=C2']
+    # 2026 年 4 月 17 日 13:16:26
+    smiles_list = ['O=C(NC1=CC=C(CN2CN(C)CC2)C(C(F)F)=C1)C3=CC(C4=CC5=CN=C(NC)N=C5C=C4)=C(C)C=C3']
     num_targets = len(smiles_list)
     t0 = time.time()
     for (i, target_mol) in enumerate(smiles_list):
@@ -143,8 +145,8 @@ if __name__ == '__main__':
     # setup_logger('plan.log')
 
     retro_plan()
-# python retro_plan_single.py --use_value_fn --one_step_type template_free 
-# --iterations 101 --viz --gpu 0 
-# --expansion_topk 16 
-# --CSS --RD_list "[(7,2),(3,0)]" --DICT 
+# python retro_plan_single.py --use_value_fn --one_step_type template_free \
+# --iterations 101 --viz --gpu 1 \
+# --expansion_topk 16 \
+# --CSS --RD_list "[(7,2),(3,0)]" --DICT \
 # --test_routes self_defined 
