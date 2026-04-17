@@ -1,6 +1,7 @@
 import torch
 import logging
 import time
+from typing import Optional
 from common.prepare_utils import prepare_starting_molecules, prepare_mlp,prepare_r_smiles, \
     prepare_molstar_planner
 from common.smiles_to_fp import smiles_to_fp, batch_smiles_to_fp
@@ -19,7 +20,9 @@ class RSPlanner:
                  starting_molecules=dirpath+'/dataset/origin_dict.csv',
                  one_step_type = "mlp",
                  CCS=True,
-                 radius=9,
+                 radius: Optional[int] = None,
+                 primary_css_radius: int = 9,
+                 secondary_css_radius: int = 0,
                  mlp_templates=dirpath+'/one_step_model/template_rules_1.dat',
                  mlp_model_dump=dirpath+'/one_step_model/saved_rollout_state_1_2048.ckpt',
                  save_folder=dirpath+'/saved_models',
@@ -41,11 +44,15 @@ class RSPlanner:
             forward_model_path = 'one_step_model/USPTO-MIT_RtoP_mixed.pt'
             forward_topk = 1
             CSS = CCS
-            import ast
-            if radius < 11:
-                RD_list = ast.literal_eval(f"[({radius},0)]")
-            else:
-                RD_list = ast.literal_eval(f"[({radius // 10},2),({radius % 10},0)]")
+            primary_radius = int(radius) if radius is not None else int(primary_css_radius)
+            secondary_radius = 0 if radius is not None else int(secondary_css_radius)
+            RD_list = []
+            if primary_radius > 0:
+                RD_list.append((primary_radius, 2))
+            if secondary_radius > 0:
+                RD_list.append((secondary_radius, 0))
+            if not RD_list:
+                RD_list = [(9, 0)]
             DICT = False
             one_step = prepare_r_smiles(retro_model_path, retro_topk, forward_model_path, forward_topk, CSS, RD_list, DICT)
         print("One step model prepared.")
@@ -117,4 +124,3 @@ if __name__ == '__main__':
 
     result = planner.plan('CC(C)c1ccc(-n2nc(O)c3c(=O)c4ccc(Cl)cc4[nH]c3c2=O)cc1')
     print(result)
-

@@ -145,6 +145,8 @@ async def submit_task(request: TaskSubmissionRequest):
             timestamp=datetime.now().isoformat()
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"任务提交失败: {str(e)}")
 

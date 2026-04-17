@@ -688,9 +688,15 @@
             </div>
 
             <div class="param-item">
-                <label for="radius">CSS Radius</label>
-                <input type="number" id="radius" value="9" min="1" max="10">
-                <div class="param-hint">半径 1–10</div>
+                <label for="primaryCSSRadius">Primary CSS Radius</label>
+                <input type="number" id="primaryCSSRadius" value="9" min="1" max="15">
+                <div class="param-hint">主半径 r1，用于 `(r1, 2)`</div>
+            </div>
+
+            <div class="param-item">
+                <label for="secondaryCSSRadius">Secondary CSS Radius</label>
+                <input type="number" id="secondaryCSSRadius" value="0" min="0" max="15">
+                <div class="param-hint">次半径 r2，用于 `(r2, 0)`；设为 0 表示关闭</div>
             </div>
 
             <div class="param-item">
@@ -784,7 +790,8 @@
             use_value_fn:   document.getElementById('useValueFn').value === 'true',
             one_step_type:  document.getElementById('oneStepType').value,
             ccs:            document.getElementById('CCS').value === 'true',
-            radius:         parseInt(document.getElementById('radius').value),
+            primary_css_radius: parseInt(document.getElementById('primaryCSSRadius').value),
+            secondary_css_radius: parseInt(document.getElementById('secondaryCSSRadius').value),
             file_prefix:    document.getElementById('filePrefix').value.trim(),
         };
 

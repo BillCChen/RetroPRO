@@ -254,7 +254,9 @@ class PredictionRequest(BaseModel):
     use_value_fn: bool = True
     one_step_type: str   # 可选值: "mlp", "r_smiles"
     CCS: bool = True
-    radius: int = 9
+    radius: Optional[int] = None
+    primary_css_radius: int = 9
+    secondary_css_radius: int = 0
     file_prefix: Optional[str] = None  # 添加这一行
 
 class PredictionResponse(BaseModel):
@@ -446,6 +448,8 @@ async def predict_route(request: PredictionRequest, raw_request: Request):
             one_step_type=request.one_step_type,
             CCS=request.CCS,
             radius=request.radius,
+            primary_css_radius=int(request.primary_css_radius),
+            secondary_css_radius=int(request.secondary_css_radius),
             starting_mols=STARTING_MOLECULES_CACHE
         )
 
@@ -465,7 +469,9 @@ async def predict_route(request: PredictionRequest, raw_request: Request):
                 "use_value_fn": request.use_value_fn,
                 "one_step_type": request.one_step_type,
                 "CCS": request.CCS,
-                "radius": request.radius
+                "radius": request.radius,
+                "primary_css_radius": request.primary_css_radius,
+                "secondary_css_radius": request.secondary_css_radius,
             },
             "result": result,
             # "route": result.get('route', []) if result else []
