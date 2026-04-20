@@ -63,6 +63,14 @@
         @keyframes blink {
             0%,100% { opacity:1; } 50% { opacity:.3; }
         }
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 0 rgba(0,212,180,0); opacity: .92; }
+            50% { box-shadow: 0 0 28px rgba(0,212,180,.22); opacity: 1; }
+        }
+        @keyframes progressSweep {
+            0% { transform: translateX(-120%); }
+            100% { transform: translateX(120%); }
+        }
 
         /* ── Header ────────────────────────────────────── */
         .header {
@@ -379,6 +387,176 @@
             animation: fadeUp .4s ease both;
         }
 
+        .history-section {
+            margin-top: 28px;
+        }
+        .history-toolbar {
+            display: grid;
+            grid-template-columns: 1.2fr .9fr .9fr auto auto;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .history-toolbar input {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 2px;
+            color: var(--text-bright);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .78rem;
+            padding: 9px 10px;
+            outline: none;
+        }
+        .history-list {
+            display: grid;
+            gap: 10px;
+        }
+        .history-item {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 14px;
+            display: grid;
+            gap: 8px;
+        }
+        .history-item-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .history-name {
+            color: var(--text-bright);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .76rem;
+            word-break: break-all;
+        }
+        .history-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            color: var(--text-muted);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .68rem;
+        }
+        .history-empty {
+            padding: 20px;
+            border: 1px dashed var(--border);
+            border-radius: 3px;
+            color: var(--text-muted);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .72rem;
+            text-align: center;
+        }
+        .recommend-section {
+            margin-top: 18px;
+            margin-bottom: 28px;
+        }
+        .recommend-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .recommend-toolbar select {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 2px;
+            color: var(--text-bright);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .76rem;
+            padding: 8px 10px;
+            outline: none;
+        }
+        .recommend-list {
+            display: grid;
+            gap: 14px;
+        }
+        .recommend-row {
+            display: grid;
+            gap: 8px;
+        }
+        .recommend-row-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .64rem;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+        }
+        .recommend-row-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .recommend-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 10px;
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+        }
+        .recommend-mol {
+            min-height: 110px;
+            border: 1px solid var(--border);
+            border-radius: 2px;
+            background: var(--surface);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            padding: 8px;
+        }
+        .recommend-mol img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .recommend-score {
+            color: var(--accent);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .64rem;
+        }
+        .recommend-card .history-item-top {
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .recommend-card .history-name {
+            font-size: .66rem;
+            line-height: 1.35;
+        }
+        .recommend-card .history-meta {
+            font-size: .6rem;
+            gap: 8px;
+        }
+        .recommend-smiles-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 8px;
+        }
+        .recommend-smiles {
+            color: var(--text-bright);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .6rem;
+            line-height: 1.35;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .recommend-copy-btn {
+            padding: 5px 8px;
+            min-width: 0;
+            font-size: .56rem;
+            letter-spacing: .08em;
+            flex-shrink: 0;
+        }
+
         .result-panel {
             background: var(--panel);
             border: 1px solid var(--border);
@@ -516,18 +694,56 @@
             position: fixed;
             inset: 0;
             background: rgba(7,11,17,.9);
-            backdrop-filter: blur(5px);
+            backdrop-filter: blur(10px);
             z-index: 9999;
             align-items: center;
             justify-content: center;
+            padding: 24px;
         }
         #loadingOverlay.visible { display: flex; }
 
-        .loading-box { text-align: center; }
+        .loading-box {
+            width: min(880px, 100%);
+            padding: 28px;
+            border: 1px solid var(--border-bright);
+            border-radius: 4px;
+            background:
+                radial-gradient(circle at top left, rgba(0,212,180,.08), transparent 36%),
+                radial-gradient(circle at top right, rgba(68,155,255,.08), transparent 32%),
+                linear-gradient(180deg, rgba(11,21,32,.96), rgba(7,11,17,.98));
+            box-shadow: 0 24px 80px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.03);
+            transition: background 2s ease, border-color 2s ease, box-shadow 2s ease;
+        }
+        .loading-box.completed {
+            border-color: rgba(255,170,89,.75);
+            background:
+                radial-gradient(circle at top left, rgba(255,173,94,.18), transparent 36%),
+                radial-gradient(circle at top right, rgba(255,104,72,.16), transparent 32%),
+                linear-gradient(180deg, rgba(44,20,12,.96), rgba(24,11,8,.98));
+            box-shadow: 0 24px 90px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,214,170,.05);
+        }
+        .loading-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 22px;
+        }
+        .loading-kicker {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .68rem;
+            color: var(--accent);
+            letter-spacing: .18em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
         .loading-rings {
-            width: 60px; height: 60px;
-            margin: 0 auto 22px;
+            width: 90px; height: 90px;
             position: relative;
+            flex-shrink: 0;
+            border: 1px solid rgba(0,212,180,.18);
+            border-radius: 50%;
+            animation: pulseGlow 2.2s ease-in-out infinite;
         }
         .loading-rings::before, .loading-rings::after {
             content: '';
@@ -545,18 +761,174 @@
             animation: spin 1.5s linear infinite reverse;
         }
         .loading-title {
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: .78rem;
-            letter-spacing: .18em;
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 2rem;
+            letter-spacing: .14em;
             text-transform: uppercase;
-            color: var(--accent);
+            color: var(--text-bright);
         }
         .loading-sub {
             font-family: 'IBM Plex Mono', monospace;
-            font-size: .65rem;
+            font-size: .68rem;
             color: var(--text-muted);
             margin-top: 8px;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+        }
+        .loading-grid {
+            display: grid;
+            grid-template-columns: 1.2fr .8fr;
+            gap: 18px;
+            align-items: stretch;
+        }
+        .loading-panel {
+            background: rgba(8,17,26,.76);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 18px;
+            min-height: 100%;
+        }
+        .loading-panel-title {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .62rem;
+            letter-spacing: .16em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+        }
+        .progress-bar-shell {
+            position: relative;
+            height: 16px;
+            border-radius: 999px;
+            overflow: hidden;
+            border: 1px solid var(--border-bright);
+            background: linear-gradient(90deg, rgba(255,255,255,.02), rgba(255,255,255,.06));
+        }
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #00d4b4, #2df0d0 55%, #69b8ff 100%);
+            box-shadow: 0 0 30px rgba(0,212,180,.28);
+            transition: width .45s ease;
+            position: relative;
+        }
+        .progress-bar-fill::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent);
+            animation: progressSweep 1.8s linear infinite;
+        }
+        .progress-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .7rem;
             letter-spacing: .08em;
+            color: var(--text-muted);
+            gap: 12px;
+        }
+        .hud-stats {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+        .hud-card {
+            border: 1px solid rgba(38,73,106,.9);
+            background: linear-gradient(180deg, rgba(15,30,48,.88), rgba(9,18,28,.9));
+            border-radius: 3px;
+            padding: 14px;
+        }
+        .hud-card-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .58rem;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 9px;
+        }
+        .hud-card-value {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 2rem;
+            line-height: .95;
+            letter-spacing: .08em;
+            color: var(--text-bright);
+        }
+        .hud-card-sub {
+            margin-top: 8px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .62rem;
+            color: var(--accent);
+            letter-spacing: .08em;
+        }
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(0,212,180,.24);
+            background: rgba(0,212,180,.06);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .68rem;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+        .status-chip::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: blink 1.8s ease-in-out infinite;
+        }
+        .loading-result-line {
+            margin-top: 18px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .7rem;
+            letter-spacing: .08em;
+            color: var(--text-muted);
+        }
+        .countdown-panel {
+            display: none;
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid var(--border);
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .countdown-panel.visible { display: flex; }
+        .countdown-copy {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .72rem;
+            letter-spacing: .08em;
+            color: var(--text-muted);
+        }
+        .countdown-copy strong {
+            color: var(--text-bright);
+            font-size: 1rem;
+            margin-left: 6px;
+        }
+        .btn-overlay {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: .68rem;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            padding: 10px 16px;
+            border-radius: 2px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
         }
 
         /* ── Footer ────────────────────────────────────── */
@@ -576,6 +948,9 @@
         @media (max-width: 720px) {
             .input-grid { grid-template-columns: 1fr; }
             .params-grid { grid-template-columns: repeat(2, 1fr); }
+            .loading-grid { grid-template-columns: 1fr; }
+            .countdown-panel { flex-direction: column; align-items: flex-start; }
+            .history-toolbar { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -642,9 +1017,27 @@
         </div>
     </div>
 
-    <!-- ── 02 · Search Parameters ───────────────────────── -->
+    <div class="recommend-section">
+        <div class="section-label">02 · 相似结果推荐</div>
+        <div class="recommend-toolbar">
+            <label for="similarityMethod" class="panel-label" style="margin-bottom:0;">相似度方式</label>
+            <select id="similarityMethod">
+                <option value="ecfp4" selected>ECFP4 指纹相似度</option>
+                <option value="scaffold">骨架相似度</option>
+                <option value="morgan">Morgan 指纹相似度</option>
+            </select>
+            <button class="btn-tool" onclick="loadSimilarExamples()">
+                <i class="fas fa-magnifying-glass"></i> 重新推荐
+            </button>
+        </div>
+        <div id="recommendList" class="recommend-list">
+            <div class="history-empty">输入 SMILES 后，这里会显示 3 个相似结果示例。</div>
+        </div>
+    </div>
+
+    <!-- ── 03 · Search Parameters ───────────────────────── -->
     <div class="params-section">
-        <div class="section-label">02 · Search Parameters</div>
+        <div class="section-label">03 · Search Parameters</div>
         <div class="params-grid">
 
             <div class="param-item">
@@ -715,9 +1108,9 @@
         </div>
     </div>
 
-    <!-- ── 03 · Results ─────────────────────────────────── -->
+    <!-- ── 04 · Results ─────────────────────────────────── -->
     <div id="resultCard">
-        <div class="section-label">03 · Results</div>
+        <div class="section-label">04 · Results</div>
         <div class="result-panel">
             <div class="result-toolbar">
                 <div class="result-toolbar-left">
@@ -742,6 +1135,24 @@
         </div>
     </div>
 
+    <div class="history-section">
+        <div class="section-label">05 · 历史记录</div>
+        <div class="history-toolbar">
+            <input type="text" id="historyQuery" placeholder="按名称/前缀/SMILES 搜索">
+            <input type="datetime-local" id="historyStart">
+            <input type="datetime-local" id="historyEnd">
+            <button class="btn-tool" onclick="loadHistoryRecords()">
+                <i class="fas fa-filter"></i> 筛选
+            </button>
+            <button class="btn-tool" onclick="resetHistoryFilters()">
+                <i class="fas fa-rotate-left"></i> 重置
+            </button>
+        </div>
+        <div id="historyList" class="history-list">
+            <div class="history-empty">正在加载最近 100 条历史记录…</div>
+        </div>
+    </div>
+
     <footer class="footer">
         <span>RetroTMP · Retrosynthetic Pathway Planning</span>
         <span>Retro* Algorithm · MLP / Template-Free Models</span>
@@ -751,14 +1162,73 @@
 <!-- ── Loading overlay ──────────────────────────────── -->
 <div id="loadingOverlay">
     <div class="loading-box">
-        <div class="loading-rings"></div>
-        <div class="loading-title">Running Retrosynthesis</div>
-        <div class="loading-sub">This may take a few minutes…</div>
+        <div class="loading-topbar">
+            <div>
+                <div class="loading-kicker">预测运行遥测</div>
+                <div class="loading-title">正在执行逆合成预测</div>
+                <div class="loading-sub" id="loadingSub">这可能需要几分钟，请稍候…</div>
+            </div>
+            <div class="loading-rings"></div>
+        </div>
+        <div class="loading-grid">
+            <div class="loading-panel">
+                <div class="loading-panel-title">循环进度</div>
+                <div class="progress-bar-shell">
+                    <div class="progress-bar-fill" id="progressBarFill"></div>
+                </div>
+                <div class="progress-meta">
+                    <span id="progressRatio">0 / 0</span>
+                    <span id="progressPercent">0.0%</span>
+                </div>
+                <div class="loading-result-line" id="loadingMessage">正在等待规划器初始化…</div>
+            </div>
+            <div class="loading-panel">
+                <div class="loading-panel-title">实时指标</div>
+                <div class="status-chip" id="loadingStatusChip">排队中</div>
+                <div class="hud-stats">
+                    <div class="hud-card">
+                        <div class="hud-card-label">已展开节点数</div>
+                        <div class="hud-card-value" id="expandedNodesValue">0</div>
+                        <div class="hud-card-sub">除根节点外的总节点数</div>
+                    </div>
+                    <div class="hud-card">
+                        <div class="hud-card-label">合成树最大深度</div>
+                        <div class="hud-card-value" id="maxDepthValue">0</div>
+                        <div class="hud-card-sub">当前最深分支</div>
+                    </div>
+                    <div class="hud-card">
+                        <div class="hud-card-label">平均每轮耗时</div>
+                        <div class="hud-card-value" id="avgIterValue">--</div>
+                        <div class="hud-card-sub">秒 / 循环</div>
+                    </div>
+                    <div class="hud-card">
+                        <div class="hud-card-label">预计剩余时间</div>
+                        <div class="hud-card-value" id="etaValue">--</div>
+                        <div class="hud-card-sub">按平均耗时估算</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="countdown-panel" id="countdownPanel">
+            <div class="countdown-copy">将在<strong id="countdownValue">10s</strong>后自动跳转到结果页面</div>
+            <button class="btn-overlay" id="jumpToResultBtn" type="button">
+                <i class="fas fa-arrow-right"></i>
+                进入结果页面
+            </button>
+        </div>
     </div>
 </div>
 
 <script>
     let currentTaskId = null;
+    let progressPollTimer = null;
+    let progressAnimationTimer = null;
+    let resultRedirectTimer = null;
+    let resultCountdownTimer = null;
+    let resultCountdownValue = 10;
+    let displayedProgressState = null;
+    let targetProgressState = null;
+    let redirectPendingTaskId = null;
 
     // ── Error helpers ──────────────────────────────────────
     function showError(msg) {
@@ -771,6 +1241,431 @@
         document.getElementById('errorMsg').classList.remove('visible');
     }
 
+    function formatSeconds(sec) {
+        if (sec === null || sec === undefined || Number.isNaN(sec)) return '--';
+        return `${Math.max(0, Number(sec)).toFixed(2)} 秒`;
+    }
+
+    function stopProgressPolling() {
+        if (progressPollTimer) {
+            clearInterval(progressPollTimer);
+            progressPollTimer = null;
+        }
+    }
+
+    function clearResultRedirect() {
+        if (resultRedirectTimer) {
+            clearTimeout(resultRedirectTimer);
+            resultRedirectTimer = null;
+        }
+        if (resultCountdownTimer) {
+            clearInterval(resultCountdownTimer);
+            resultCountdownTimer = null;
+        }
+        const countdownPanel = document.getElementById('countdownPanel');
+        countdownPanel.classList.remove('visible');
+        redirectPendingTaskId = null;
+    }
+
+    function stopProgressAnimation() {
+        if (progressAnimationTimer) {
+            clearTimeout(progressAnimationTimer);
+            progressAnimationTimer = null;
+        }
+    }
+
+    function showLoadingOverlay() {
+        document.getElementById('loadingOverlay').classList.add('visible');
+    }
+
+    function hideLoadingOverlay() {
+        document.getElementById('loadingOverlay').classList.remove('visible');
+    }
+
+    function clearResultView() {
+        currentTaskId = null;
+        const card = document.getElementById('resultCard');
+        const content = document.getElementById('resultContent');
+        card.style.display = 'none';
+        content.innerHTML = '';
+    }
+
+    async function copyText(text) {
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (error) {
+            const input = document.createElement('textarea');
+            input.value = text;
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+        }
+    }
+
+    async function fetchSmilesPreview(smiles) {
+        const response = await fetch('/api/preview-smiles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ smiles }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || '分子图加载失败');
+        }
+        return result;
+    }
+
+    async function renderSimilarExamples(records) {
+        const list = document.getElementById('recommendList');
+        if (!records || records.length === 0) {
+            list.innerHTML = `<div class="history-empty">暂无可用的相似结果推荐。</div>`;
+            return;
+        }
+
+        const successRecords = records.filter((record) => record.succ).slice(0, 5);
+        const failureRecords = successRecords.length < 5
+            ? records.filter((record) => !record.succ).slice(0, 5 - successRecords.length)
+            : [];
+
+        const renderRow = async (rowTitle, rowType, rowRecords) => {
+            if (!rowRecords || rowRecords.length === 0) return '';
+            const cards = await Promise.all(rowRecords.map(async (record) => {
+            let imageBlock = `<div class="history-empty" style="padding:16px;">分子图加载失败</div>`;
+            try {
+                const preview = await fetchSmilesPreview(record.input_smiles || record.canonical_smiles || '');
+                if (preview.valid && preview.image) {
+                    imageBlock = `<img src="${preview.image}" alt="分子结构图">`;
+                }
+            } catch (error) {
+                imageBlock = `<div class="history-empty" style="padding:16px;">分子图加载失败</div>`;
+            }
+            const smilesText = record.canonical_smiles || record.input_smiles || '--';
+            return `
+            <div class="recommend-card">
+                <div class="history-item-top">
+                    <div class="history-name">${getRecommendTitle(record)}</div>
+                    ${record.succ ? `
+                    <button class="btn-tool" onclick="openHistoryResult('${record.task_id}')">
+                        <i class="fas fa-folder-open"></i> 查看预测路线
+                    </button>
+                    ` : `
+                    <button class="btn-tool" type="button" disabled>
+                        <i class="fas fa-ban"></i> 无预测路线
+                    </button>
+                    `}
+                </div>
+                <div class="recommend-mol">
+                    ${imageBlock}
+                </div>
+                <div class="recommend-score">相似度：${(Number(record.similarity || 0) * 100).toFixed(2)}%</div>
+                <div class="recommend-smiles-row">
+                    <div class="recommend-smiles" title="${smilesText}">${smilesText}</div>
+                    <button class="btn-tool recommend-copy-btn" onclick="copyText(${JSON.stringify(smilesText)})">
+                        <i class="fas fa-copy"></i> 复制
+                    </button>
+                </div>
+                <div class="history-meta">
+                    <span>状态：${record.succ ? '成功' : '失败'}</span>
+                    <span>合并条数：${record.merged_count ?? 1}</span>
+                    <span>时间：${formatHistoryTime(record.timestamp)}</span>
+                </div>
+                <div class="history-meta">
+                    <span>任务 ID：${record.task_id}</span>
+                </div>
+            </div>
+        `;
+            }));
+
+            return `
+                <div class="recommend-row recommend-row-${rowType}">
+                    <div class="recommend-row-title">${rowTitle}</div>
+                    <div class="recommend-row-grid">
+                        ${cards.join('')}
+                    </div>
+                </div>
+            `;
+        };
+
+        const sections = await Promise.all([
+            renderRow('成功示例', 'success', successRecords),
+            renderRow('失败示例', 'failure', failureRecords),
+        ]);
+
+        list.innerHTML = sections.filter(Boolean).join('');
+    }
+
+    async function loadSimilarExamples() {
+        const smiles = document.getElementById('smilesInput').value.trim();
+        const list = document.getElementById('recommendList');
+        if (!smiles || smiles.length < 5) {
+            list.innerHTML = `<div class="history-empty">输入 SMILES 后，这里会显示 3 个相似结果示例。</div>`;
+            return;
+        }
+        const method = document.getElementById('similarityMethod').value;
+        const params = new URLSearchParams({
+            smiles,
+            method,
+            limit: '12',
+        });
+        const response = await fetch(`/api/similar?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || '相似结果推荐加载失败');
+        }
+        await renderSimilarExamples(payload.records || []);
+    }
+
+    function updateProgressOverlay(progress) {
+        document.getElementById('loadingOverlay').querySelector('.loading-box')
+            .classList.toggle('completed', progress.status === 'completed');
+        const percent = Number(progress.progress_percent || 0);
+        document.getElementById('progressBarFill').style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+        document.getElementById('progressRatio').textContent = `${progress.current_iteration} / ${progress.total_iterations}`;
+        document.getElementById('progressPercent').textContent = `${percent.toFixed(1)}%`;
+        document.getElementById('expandedNodesValue').textContent = `${progress.expanded_nodes || 0}`;
+        document.getElementById('maxDepthValue').textContent = `${progress.max_depth || 0}`;
+        document.getElementById('avgIterValue').textContent = progress.avg_iter_seconds != null ? formatSeconds(progress.avg_iter_seconds) : '--';
+        document.getElementById('etaValue').textContent = progress.eta_seconds != null ? formatSeconds(progress.eta_seconds) : '--';
+        document.getElementById('loadingMessage').textContent = progress.message || '正在执行规划循环…';
+        const statusText = {
+            queued: '排队中',
+            running: '运行中',
+            completed: '已完成',
+            failed: '失败',
+        };
+        document.getElementById('loadingStatusChip').textContent = statusText[progress.status] || '运行中';
+        document.getElementById('loadingSub').textContent = progress.status === 'completed'
+            ? '已找到合成路径，正在准备结果跳转…'
+            : '随着合成树不断展开，实时指标会持续刷新。';
+    }
+
+    function cloneProgress(progress) {
+        return JSON.parse(JSON.stringify(progress));
+    }
+
+    function maybeStartRedirect(taskId) {
+        if (!targetProgressState || targetProgressState.status !== 'completed') return;
+        if (!displayedProgressState) return;
+        if (displayedProgressState.current_iteration < targetProgressState.current_iteration) return;
+        if (redirectPendingTaskId === taskId) return;
+        redirectPendingTaskId = taskId;
+        stopProgressPolling();
+        startResultRedirect(taskId);
+    }
+
+    function animateProgressDisplay(taskId) {
+        if (!targetProgressState) return;
+        if (!displayedProgressState) {
+            displayedProgressState = cloneProgress(targetProgressState);
+            updateProgressOverlay(displayedProgressState);
+            maybeStartRedirect(taskId);
+            return;
+        }
+
+        const targetIter = Number(targetProgressState.current_iteration || 0);
+        const displayedIter = Number(displayedProgressState.current_iteration || 0);
+
+        if (displayedIter >= targetIter) {
+            displayedProgressState = {
+                ...displayedProgressState,
+                ...targetProgressState,
+                current_iteration: displayedIter,
+                progress_percent: targetProgressState.total_iterations > 0
+                    ? (displayedIter / targetProgressState.total_iterations) * 100
+                    : 0,
+            };
+            updateProgressOverlay(displayedProgressState);
+            maybeStartRedirect(taskId);
+            return;
+        }
+
+        const nextIter = displayedIter + 1;
+        const totalDelta = Math.max(targetIter - displayedIter, 1);
+        const stepRatio = 1 / totalDelta;
+        displayedProgressState = {
+            ...displayedProgressState,
+            ...targetProgressState,
+            current_iteration: nextIter,
+            progress_percent: targetProgressState.total_iterations > 0
+                ? (nextIter / targetProgressState.total_iterations) * 100
+                : 0,
+            expanded_nodes: Math.round(
+                Number(displayedProgressState.expanded_nodes || 0) +
+                (Number(targetProgressState.expanded_nodes || 0) - Number(displayedProgressState.expanded_nodes || 0)) * stepRatio
+            ),
+            max_depth: Math.round(
+                Number(displayedProgressState.max_depth || 0) +
+                (Number(targetProgressState.max_depth || 0) - Number(displayedProgressState.max_depth || 0)) * stepRatio
+            ),
+            eta_seconds: targetProgressState.avg_iter_seconds != null
+                ? Number(targetProgressState.avg_iter_seconds) * Math.max(Number(targetProgressState.total_iterations || 0) - nextIter, 0)
+                : targetProgressState.eta_seconds,
+        };
+        updateProgressOverlay(displayedProgressState);
+
+        stopProgressAnimation();
+        progressAnimationTimer = setTimeout(() => {
+            animateProgressDisplay(taskId);
+        }, 500);
+    }
+
+    async function fetchProgress(taskId) {
+        const response = await fetch(`/api/progress/${taskId}`);
+        const progress = await response.json();
+        if (!response.ok) {
+            throw new Error(progress.detail || '无法获取预测进度');
+        }
+        return progress;
+    }
+
+    function startResultRedirect(taskId) {
+        clearResultRedirect();
+        resultCountdownValue = 10;
+        const countdownPanel = document.getElementById('countdownPanel');
+        const countdownValueEl = document.getElementById('countdownValue');
+        const jumpButton = document.getElementById('jumpToResultBtn');
+        countdownValueEl.textContent = `${resultCountdownValue}s`;
+        countdownPanel.classList.add('visible');
+        jumpButton.onclick = () => {
+            window.location.href = `/?task_id=${encodeURIComponent(taskId)}`;
+        };
+        resultCountdownTimer = setInterval(() => {
+            resultCountdownValue -= 1;
+            countdownValueEl.textContent = `${Math.max(resultCountdownValue, 0)}s`;
+        }, 1000);
+        resultRedirectTimer = setTimeout(() => {
+            window.location.href = `/?task_id=${encodeURIComponent(taskId)}`;
+        }, 10000);
+    }
+
+    function formatHistoryTime(value) {
+        if (!value) return '--';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function getRecommendTitle(record) {
+        const prefix = (record.file_prefix || '').trim();
+        if (prefix) return prefix;
+        return `任务 ${String(record.task_id || '--').slice(0, 8)}`;
+    }
+
+    function renderHistory(records) {
+        const list = document.getElementById('historyList');
+        if (!records || records.length === 0) {
+            list.innerHTML = `<div class="history-empty">没有匹配的历史记录。</div>`;
+            return;
+        }
+
+        list.innerHTML = records.map((record) => `
+            <div class="history-item">
+                <div class="history-item-top">
+                    <div class="history-name">${record.file_prefix || record.input_smiles || record.task_id}</div>
+                    <button class="btn-tool" onclick="openHistoryResult('${record.task_id}')">
+                        <i class="fas fa-folder-open"></i> 查看
+                    </button>
+                </div>
+                <div class="history-meta">
+                    <span>时间：${formatHistoryTime(record.timestamp)}</span>
+                    <span>状态：${record.succ ? '成功' : '失败'}</span>
+                    <span>循环：${record.iter ?? '--'}</span>
+                    <span>步数：${record.route_len ?? '--'}</span>
+                    <span>合并条数：${record.merged_count ?? 1}</span>
+                </div>
+                <div class="history-meta">
+                    <span>Canonical：${record.canonical_smiles || '--'}</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async function loadHistoryRecords() {
+        const query = document.getElementById('historyQuery').value.trim();
+        const start = document.getElementById('historyStart').value;
+        const end = document.getElementById('historyEnd').value;
+        const params = new URLSearchParams({ limit: '100' });
+        if (query) params.set('query', query);
+        if (start) params.set('start', start);
+        if (end) params.set('end', end);
+
+        const response = await fetch(`/api/history?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.detail || '历史记录加载失败');
+        }
+        renderHistory(payload.records || []);
+    }
+
+    function resetHistoryFilters() {
+        document.getElementById('historyQuery').value = '';
+        document.getElementById('historyStart').value = '';
+        document.getElementById('historyEnd').value = '';
+        loadHistoryRecords().catch((error) => showError('加载历史记录失败：' + error.message));
+    }
+
+    async function openHistoryResult(taskId) {
+        currentTaskId = taskId;
+        await loadResult(taskId);
+    }
+
+    async function startProgressPolling(taskId) {
+        stopProgressPolling();
+        stopProgressAnimation();
+        clearResultRedirect();
+        displayedProgressState = null;
+        targetProgressState = null;
+
+        const poll = async () => {
+            try {
+                const progress = await fetchProgress(taskId);
+                targetProgressState = cloneProgress(progress);
+                if (!displayedProgressState) {
+                    const firstVisibleIteration = Math.min(Number(progress.current_iteration || 0), 1);
+                    const firstRatio = Number(progress.current_iteration || 0) > 0
+                        ? firstVisibleIteration / Number(progress.current_iteration || 1)
+                        : 1;
+                    displayedProgressState = {
+                        ...cloneProgress(progress),
+                        current_iteration: firstVisibleIteration,
+                        progress_percent: Number(progress.total_iterations || 0) > 0
+                            ? (firstVisibleIteration / Number(progress.total_iterations || 1)) * 100
+                            : 0,
+                        expanded_nodes: Math.round(Number(progress.expanded_nodes || 0) * firstRatio),
+                        max_depth: Math.round(Number(progress.max_depth || 0) * firstRatio),
+                        eta_seconds: progress.avg_iter_seconds != null
+                            ? Number(progress.avg_iter_seconds) * Math.max(Number(progress.total_iterations || 0) - firstVisibleIteration, 0)
+                            : progress.eta_seconds,
+                    };
+                    updateProgressOverlay(displayedProgressState);
+                    if (Number(progress.current_iteration || 0) > firstVisibleIteration) {
+                        animateProgressDisplay(taskId);
+                    }
+                } else {
+                    animateProgressDisplay(taskId);
+                }
+                if (progress.status === 'completed') {
+                    maybeStartRedirect(taskId);
+                } else if (progress.status === 'failed') {
+                    stopProgressPolling();
+                    stopProgressAnimation();
+                    hideLoadingOverlay();
+                    showError(progress.error || progress.message || '预测失败');
+                }
+            } catch (error) {
+                stopProgressPolling();
+                stopProgressAnimation();
+                hideLoadingOverlay();
+                showError('进度查询失败：' + error.message);
+            }
+        };
+
+        await poll();
+        progressPollTimer = setInterval(poll, 1200);
+    }
+
     // ── Prediction ─────────────────────────────────────────
     async function startPrediction() {
         const smiles = document.getElementById('smilesInput').value.trim();
@@ -781,7 +1676,22 @@
             return;
         }
 
-        document.getElementById('loadingOverlay').classList.add('visible');
+        clearResultView();
+        showLoadingOverlay();
+        const initialProgress = {
+            progress_percent: 0,
+            current_iteration: 0,
+            total_iterations: parseInt(document.getElementById('iterations').value),
+            expanded_nodes: 0,
+            max_depth: 0,
+            avg_iter_seconds: null,
+            eta_seconds: null,
+            status: 'queued',
+            message: '正在向推理后端提交任务…',
+        };
+        displayedProgressState = cloneProgress(initialProgress);
+        targetProgressState = cloneProgress(initialProgress);
+        updateProgressOverlay(initialProgress);
 
         const requestData = {
             smiles,
@@ -789,7 +1699,7 @@
             expansion_topk: parseInt(document.getElementById('expansionTopk').value),
             use_value_fn:   document.getElementById('useValueFn').value === 'true',
             one_step_type:  document.getElementById('oneStepType').value,
-            ccs:            document.getElementById('CCS').value === 'true',
+            CCS:            document.getElementById('CCS').value === 'true',
             primary_css_radius: parseInt(document.getElementById('primaryCSSRadius').value),
             secondary_css_radius: parseInt(document.getElementById('secondaryCSSRadius').value),
             file_prefix:    document.getElementById('filePrefix').value.trim(),
@@ -805,14 +1715,14 @@
 
             if (response.ok) {
                 currentTaskId = result.task_id;
-                await loadResult(result.task_id);
+                await startProgressPolling(result.task_id);
+                await loadHistoryRecords();
             } else {
                 throw new Error(result.detail || '预测请求失败');
             }
         } catch (error) {
             showError('预测失败：' + error.message);
-        } finally {
-            document.getElementById('loadingOverlay').classList.remove('visible');
+            hideLoadingOverlay();
         }
     }
 
@@ -846,7 +1756,7 @@
                 <div style="border:1px solid var(--border);border-radius:2px;padding:52px;
                             text-align:center;color:var(--text-muted);
                             font-family:'IBM Plex Mono',monospace;font-size:.85rem;letter-spacing:.35em;">
-                    NO ROUTE FOUND
+                    未找到合成路径
                 </div>
             `;
             return;
@@ -865,7 +1775,7 @@
                 </a>
             </div>
             <details>
-                <summary>Raw Data</summary>
+                <summary>原始数据</summary>
                 <pre>${JSON.stringify(data, null, 2)}</pre>
             </details>
         `;
@@ -893,7 +1803,7 @@
                 <div class="preview-spinner"></div>
                 <span style="font-family:'IBM Plex Mono',monospace;font-size:.72rem;
                              letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);">
-                    Loading Visualization…
+                    正在加载可视化…
                 </span>
             </div>
         `;
@@ -964,6 +1874,7 @@
                     <span>Awaiting SMILES</span>
                 </div>
             `;
+            await renderSimilarExamples([]);
             return;
         }
 
@@ -987,6 +1898,13 @@
                     预览服务连接失败
                 </div>
             `;
+            return;
+        }
+
+        try {
+            await loadSimilarExamples();
+        } catch (e) {
+            showError('加载相似结果失败：' + e.message);
         }
     }, 500);
 
@@ -1014,6 +1932,23 @@
 
     document.getElementById('smilesInput').addEventListener('input', function () {
         updateMoleculePreview(this.value.trim());
+    });
+    document.getElementById('similarityMethod').addEventListener('change', function () {
+        loadSimilarExamples().catch((error) => showError('加载相似结果失败：' + error.message));
+    });
+
+    window.addEventListener('DOMContentLoaded', async () => {
+        const params = new URLSearchParams(window.location.search);
+        const taskId = params.get('task_id');
+        try {
+            await loadHistoryRecords();
+        } catch (error) {
+            showError('加载历史记录失败：' + error.message);
+        }
+        if (taskId) {
+            currentTaskId = taskId;
+            await loadResult(taskId);
+        }
     });
 </script>
 </body>

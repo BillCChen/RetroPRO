@@ -30,9 +30,13 @@ class RSPlanner:
                  fp_dim=2048,
                  viz=False,
                  viz_dir='viz',
-                 starting_mols=None):
+                 starting_mols=None,
+                 progress_callback=None):
 
         setup_logger()
+        if gpu >= 0 and not torch.cuda.is_available():
+            logging.warning('CUDA requested with gpu=%d, but CUDA is unavailable. Falling back to CPU.', gpu)
+            gpu = -1
         device = torch.device('cuda:%d' % gpu if gpu >= 0 else 'cpu')
         if not starting_mols:
             starting_mols = prepare_starting_molecules(starting_molecules)
@@ -84,7 +88,8 @@ class RSPlanner:
             expansion_topk=expansion_topk,
             iterations=iterations,
             viz=viz,
-            viz_dir=viz_dir
+            viz_dir=viz_dir,
+            progress_callback=progress_callback,
         )
 
     def plan(self, target_mol):
