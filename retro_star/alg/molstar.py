@@ -8,15 +8,37 @@ import time
 import rdkit
 from rdkit import Chem
 def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
-            iterations, viz=False, viz_dir=None):
+            iterations, viz=False, viz_dir=None, progress_callback=None):
     mol_tree = MolTree(
         target_mol=target_mol,
         known_mols=starting_mols,
         value_fn=value_fn
     )
 
+    def emit_progress(iteration_idx, iteration_elapsed=None, status='running'):
+        if progress_callback is None:
+            return
+        mol_nodes = getattr(mol_tree, 'mol_nodes', [])
+        reaction_nodes = getattr(mol_tree, 'reaction_nodes', [])
+        expanded_nodes = max(len(mol_nodes) + len(reaction_nodes) - 1, 0)
+        max_depth = max((node.depth for node in mol_nodes), default=0)
+        try:
+            progress_callback(
+                {
+                    'status': status,
+                    'current_iteration': int(iteration_idx),
+                    'total_iterations': int(iterations),
+                    'expanded_nodes': int(expanded_nodes),
+                    'max_depth': int(max_depth),
+                    'iteration_elapsed_seconds': iteration_elapsed,
+                }
+            )
+        except Exception as exc:
+            logging.info('Progress callback failed: %s', exc)
+
     i = -1
     route_order = 1
+    emit_progress(0, iteration_elapsed=0.0, status='running')
     if not mol_tree.succ:
         for i in range(iterations):
             begin = time.time()
@@ -87,6 +109,7 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
                 logging.info('Expansion fails on %s!' % m_next.mol)
             end = time.time()
             logging.info('%s : %.1f s' % (m_next.mol,end - begin))
+            emit_progress(i + 1, iteration_elapsed=end - begin, status='running')
         logging.info('Final search status | success value | iter: %s | %s | %d'
                      % (str(mol_tree.search_status), str(mol_tree.root.succ_value), i+1))
 
@@ -109,5 +132,6 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
         f = '%s/mol_%d_search_tree' % (viz_dir, target_mol_id)
         mol_tree.viz_search_tree(f)
     end_total_nodes = len(mol_tree.mol_nodes)
+    emit_progress(max(i + 1, 0), iteration_elapsed=None, status='completed' if mol_tree.succ else 'finished')
     print(f"Total searched nodes: |-{end_total_nodes}-|")
     return mol_tree.succ, (best_route, i+1, end_total_nodes)

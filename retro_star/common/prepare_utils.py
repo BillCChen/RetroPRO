@@ -48,7 +48,7 @@ def prepare_r_smiles(retro_model_path,retro_topk,forward_model_path,forward_topk
     one_step = TP_free_Model(retro_model_path,retro_topk,forward_model_path,forward_topk,CSS,RD_list,DICT, device=device)
     return one_step
 def prepare_molstar_planner(one_step, value_fn, starting_mols, expansion_topk,
-                            iterations, viz=False, viz_dir=None):
+                            iterations, viz=False, viz_dir=None, progress_callback=None):
     expansion_handle = lambda x: one_step.run(x, topk=expansion_topk)
 
     plan_handle = lambda x, y=0: molstar(
@@ -59,6 +59,7 @@ def prepare_molstar_planner(one_step, value_fn, starting_mols, expansion_topk,
         value_fn=value_fn,
         iterations=iterations,
         viz=viz,
-        viz_dir=viz_dir
+        viz_dir=viz_dir,
+        progress_callback=progress_callback,
     )
     return plan_handle

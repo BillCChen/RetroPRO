@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi import Query
 from pydantic import BaseModel
 # from retro_star.api import RSPlanner
@@ -15,7 +15,10 @@ import secrets
 import threading
 import time
 from rdkit import Chem
+from rdkit import DataStructs
 from rdkit.Chem import Draw
+from rdkit.Chem import rdMolDescriptors
+from rdkit.Chem.Scaffolds import MurckoScaffold
 import networkx as nx
 import matplotlib.pyplot as plt
 # v2 在 main.py 的顶部添加
@@ -254,13 +257,172 @@ class PredictionRequest(BaseModel):
     use_value_fn: bool = True
     one_step_type: str   # 可选值: "mlp", "r_smiles"
     CCS: bool = True
-    radius: int = 9
+    radius: Optional[int] = None
+    primary_css_radius: int = 9
+    secondary_css_radius: int = 0
     file_prefix: Optional[str] = None  # 添加这一行
 
 class PredictionResponse(BaseModel):
     task_id: str
     status: str
     message: str
+
+
+def _build_progress_snapshot(task_id: str, progress: Dict[str, Any]) -> Dict[str, Any]:
+    avg_iter_seconds = progress.get("avg_iter_seconds")
+    current_iteration = int(progress.get("current_iteration", 0) or 0)
+    total_iterations = int(progress.get("total_iterations", 0) or 0)
+    remaining_iterations = max(total_iterations - current_iteration, 0)
+    eta_seconds = None
+    if avg_iter_seconds is not None:
+        eta_seconds = round(float(avg_iter_seconds) * remaining_iterations, 2)
+    return {
+        "task_id": task_id,
+        "status": progress.get("status", "queued"),
+        "message": progress.get("message", ""),
+        "current_iteration": current_iteration,
+        "total_iterations": total_iterations,
+        "progress_percent": round((current_iteration / total_iterations) * 100, 1) if total_iterations > 0 else 0.0,
+        "expanded_nodes": int(progress.get("expanded_nodes", 0) or 0),
+        "max_depth": int(progress.get("max_depth", 0) or 0),
+        "avg_iter_seconds": avg_iter_seconds,
+        "eta_seconds": eta_seconds,
+        "result_ready": bool(progress.get("result_ready", False)),
+        "error": progress.get("error"),
+        "result_url": f"/?task_id={task_id}",
+        "updated_at": progress.get("updated_at"),
+        "completed_at": progress.get("completed_at"),
+    }
+
+
+def _run_prediction_task(task_id: str, request_data: Dict[str, Any], file_name_prefix: str):
+    total_iterations = int(request_data["iterations"])
+    iter_elapsed_samples: List[float] = []
+    _set_task_progress(
+        task_id,
+        status="running",
+        message="Initializing retrosynthesis planner",
+        current_iteration=0,
+        total_iterations=total_iterations,
+        expanded_nodes=0,
+        max_depth=0,
+        avg_iter_seconds=None,
+        result_ready=False,
+        started_at=_iso_now(),
+        completed_at=None,
+        error=None,
+    )
+
+    def progress_callback(progress: Dict[str, Any]):
+        iter_elapsed = progress.get("iteration_elapsed_seconds")
+        if iter_elapsed is not None and iter_elapsed > 0:
+            iter_elapsed_samples.append(float(iter_elapsed))
+        avg_iter_seconds = round(sum(iter_elapsed_samples) / len(iter_elapsed_samples), 2) if iter_elapsed_samples else None
+        status = progress.get("status", "running")
+        message = "Expanding synthesis tree"
+        if status == "completed":
+            message = "Prediction completed, preparing result view"
+        elif status == "finished":
+            message = "Search finished, preparing result view"
+        _set_task_progress(
+            task_id,
+            status="running" if status in {"running", "completed", "finished"} else status,
+            message=message,
+            current_iteration=int(progress.get("current_iteration", 0) or 0),
+            total_iterations=int(progress.get("total_iterations", total_iterations) or total_iterations),
+            expanded_nodes=int(progress.get("expanded_nodes", 0) or 0),
+            max_depth=int(progress.get("max_depth", 0) or 0),
+            avg_iter_seconds=avg_iter_seconds,
+        )
+
+    try:
+        planner = RSPlanner(
+            gpu=0,
+            use_value_fn=bool(request_data["use_value_fn"]),
+            iterations=total_iterations,
+            expansion_topk=int(request_data["expansion_topk"]),
+            one_step_type=request_data["one_step_type"],
+            CCS=bool(request_data["CCS"]),
+            radius=request_data.get("radius"),
+            primary_css_radius=int(request_data["primary_css_radius"]),
+            secondary_css_radius=int(request_data["secondary_css_radius"]),
+            starting_mols=STARTING_MOLECULES_CACHE,
+            progress_callback=progress_callback,
+        )
+
+        result = planner.plan(request_data["smiles"])
+        result_data = {
+            "task_id": task_id,
+            "timestamp": _iso_now(),
+            "input_smiles": request_data["smiles"],
+            "file_prefix": request_data.get("file_prefix"),
+            "parameters": {
+                "iterations": request_data["iterations"],
+                "expansion_topk": request_data["expansion_topk"],
+                "use_value_fn": request_data["use_value_fn"],
+                "one_step_type": request_data["one_step_type"],
+                "CCS": request_data["CCS"],
+                "radius": request_data.get("radius"),
+                "primary_css_radius": request_data["primary_css_radius"],
+                "secondary_css_radius": request_data["secondary_css_radius"],
+            },
+            "result": result,
+        }
+
+        json_path = os.path.join(RESULT_DIR, f"{file_name_prefix}_{task_id}.json")
+        routes_string = None
+        if result and isinstance(result, dict):
+            routes_string = result.get('routes')
+        if routes_string:
+            try:
+                reaction_list = string2reaction_list(routes_string)
+                graph = parse_and_stitch(reaction_list)
+                positions = compute_layout(graph, x_step=280, y_step=250, margin=80)
+                html_content = build_html(graph, 200, 200, positions, f"Synthesis Path {task_id}")
+                html_path = os.path.join(RESULT_DIR, f"{file_name_prefix}_{task_id}_pathview.html")
+                with open(html_path, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                result_data['html_available'] = True
+            except Exception as exc:
+                print(f"HTML visualization generation failed: {exc}")
+                result_data['html_available'] = False
+        else:
+            result_data['html_available'] = False
+
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(result_data, f, ensure_ascii=False, indent=2)
+        with open(MAPPING_FILE, 'r+', encoding='utf-8') as f:
+            mappings = json.load(f)
+            mappings[task_id] = {
+                "json": f"{file_name_prefix}_{task_id}.json",
+                "html": f"{file_name_prefix}_{task_id}_pathview.html" if result_data.get('html_available') else None
+            }
+            f.seek(0)
+            json.dump(mappings, f, indent=2)
+            f.truncate()
+
+        final_iter = result.get("iter") if isinstance(result, dict) and result.get("iter") is not None else _get_task_progress(task_id).get("current_iteration", 0)
+        final_status = "completed" if result and result.get("succ") else "failed"
+        final_message = "Prediction completed. Redirecting to result page." if final_status == "completed" else "Prediction finished without a valid route."
+        _set_task_progress(
+            task_id,
+            status=final_status,
+            message=final_message,
+            current_iteration=int(final_iter or 0),
+            total_iterations=total_iterations,
+            result_ready=True,
+            completed_at=_iso_now(),
+        )
+    except Exception as exc:
+        print(f"预测任务失败: {str(exc)}")
+        _set_task_progress(
+            task_id,
+            status="failed",
+            message="Prediction failed",
+            error=str(exc),
+            completed_at=_iso_now(),
+            result_ready=False,
+        )
 
 # def visualize_path(mol_list, output_path):
 #     """生成分子路径图"""
@@ -281,6 +443,165 @@ class PredictionResponse(BaseModel):
 STARTING_MOLECULES_CACHE = None
 from common.prepare_utils import prepare_starting_molecules
 from contextlib import asynccontextmanager
+
+TASK_PROGRESS: Dict[str, Dict[str, Any]] = {}
+TASK_PROGRESS_LOCK = threading.Lock()
+
+
+def _iso_now() -> str:
+    return datetime.now().isoformat()
+
+
+def _set_task_progress(task_id: str, **fields):
+    with TASK_PROGRESS_LOCK:
+        current = TASK_PROGRESS.setdefault(task_id, {})
+        current.update(fields)
+        current["updated_at"] = _iso_now()
+
+
+def _get_task_progress(task_id: str) -> Dict[str, Any]:
+    with TASK_PROGRESS_LOCK:
+        return dict(TASK_PROGRESS.get(task_id, {}))
+
+
+def _load_result_json_by_task_id(task_id: str) -> Dict[str, Any]:
+    file_path = get_file_path_by_task_id(task_id, "json")
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _canonicalize_smiles(smiles: str) -> str:
+    if not smiles:
+        return ""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return smiles
+    return Chem.MolToSmiles(mol, canonical=True)
+
+
+def _safe_parse_iso_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _build_history_record(task_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        payload = _load_result_json_by_task_id(task_id)
+    except Exception:
+        return None
+
+    result = payload.get("result") or {}
+    timestamp = payload.get("timestamp")
+    return {
+        "task_id": task_id,
+        "timestamp": timestamp,
+        "file_prefix": payload.get("file_prefix") or "",
+        "input_smiles": payload.get("input_smiles") or "",
+        "canonical_smiles": _canonicalize_smiles(payload.get("input_smiles") or ""),
+        "succ": bool(result.get("succ")),
+        "route_len": result.get("route_len"),
+        "iter": result.get("iter"),
+        "html_available": bool(payload.get("html_available")),
+    }
+
+
+def _merge_history_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        key = record.get("canonical_smiles") or record.get("input_smiles") or record.get("task_id")
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = {**record, "merged_count": 1}
+            continue
+        existing["merged_count"] = int(existing.get("merged_count", 1)) + 1
+        if (record.get("timestamp") or "") > (existing.get("timestamp") or ""):
+            merged[key] = {
+                **record,
+                "merged_count": existing["merged_count"],
+            }
+    return list(merged.values())
+
+
+def _list_history_records(limit: int = 100, query: str = "", start: str = "", end: str = "") -> List[Dict[str, Any]]:
+    if not os.path.exists(MAPPING_FILE):
+        return []
+
+    with open(MAPPING_FILE, "r", encoding="utf-8") as f:
+        mappings = json.load(f)
+
+    records = []
+    query_lower = query.strip().lower()
+    start_dt = _safe_parse_iso_datetime(start)
+    end_dt = _safe_parse_iso_datetime(end)
+
+    for task_id in mappings.keys():
+        record = _build_history_record(task_id)
+        if record is None:
+            continue
+
+        record_dt = _safe_parse_iso_datetime(record.get("timestamp", ""))
+        if start_dt and (record_dt is None or record_dt < start_dt):
+            continue
+        if end_dt and (record_dt is None or record_dt > end_dt):
+            continue
+
+        if query_lower:
+            haystacks = [
+                record.get("file_prefix", ""),
+                record.get("input_smiles", ""),
+                record.get("task_id", ""),
+            ]
+            if not any(query_lower in (text or "").lower() for text in haystacks):
+                continue
+
+        records.append(record)
+
+    records = _merge_history_records(records)
+    records.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    return records[:limit]
+
+
+def _fingerprint_for_similarity(smiles: str, method: str):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    method = (method or "ecfp4").lower()
+    if method == "scaffold":
+        scaffold = MurckoScaffold.GetScaffoldForMol(mol)
+        if scaffold is None or scaffold.GetNumAtoms() == 0:
+            scaffold = mol
+        return rdMolDescriptors.GetMorganFingerprintAsBitVect(scaffold, radius=2, nBits=2048)
+    if method == "morgan":
+        return rdMolDescriptors.GetMorganFingerprintAsBitVect(mol, radius=3, nBits=2048)
+    return rdMolDescriptors.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
+
+
+def _compute_similarity(smiles_a: str, smiles_b: str, method: str) -> float:
+    fp_a = _fingerprint_for_similarity(smiles_a, method)
+    fp_b = _fingerprint_for_similarity(smiles_b, method)
+    if fp_a is None or fp_b is None:
+        return 0.0
+    return float(DataStructs.TanimotoSimilarity(fp_a, fp_b))
+
+
+def _find_similar_records(smiles: str, method: str = "ecfp4", limit: int = 3) -> List[Dict[str, Any]]:
+    canonical = _canonicalize_smiles(smiles)
+    records = _list_history_records(limit=100, query="", start="", end="")
+    scored = []
+    for record in records:
+        record_smiles = record.get("canonical_smiles") or record.get("input_smiles") or ""
+        if not record_smiles or record_smiles == canonical:
+            continue
+        score = _compute_similarity(canonical, record_smiles, method)
+        if score <= 0:
+            continue
+        scored.append({**record, "similarity": round(score, 4), "method": method})
+    scored.sort(key=lambda item: item["similarity"], reverse=True)
+    return scored[:limit]
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -429,99 +750,68 @@ async def predict_route(request: PredictionRequest, raw_request: Request):
         )
 
     task_id = str(uuid.uuid4())
-    # 生成带前缀的文件名
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     if request.file_prefix:
         file_name_prefix = f"{timestamp}-{request.file_prefix}"
     else:
         file_name_prefix = timestamp
-    try:
-
-        # 初始化规划器
-        planner = RSPlanner(
-            gpu=0,  # 可根据实际情况调整
-            use_value_fn=request.use_value_fn,
-            iterations=int(request.iterations),
-            expansion_topk=int(request.expansion_topk),
-            one_step_type=request.one_step_type,
-            CCS=request.CCS,
-            radius=request.radius,
-            starting_mols=STARTING_MOLECULES_CACHE
-        )
-
-        
-        # 执行预测
-        result = planner.plan(request.smiles)
-        
-        # 保存结果
-        result_data = {
-            "task_id": task_id,
-            "timestamp": datetime.now().isoformat(),
-            "input_smiles": request.smiles,
-            "file_prefix": request.file_prefix,  # 添加这一行
-            "parameters": {
-                "iterations": request.iterations,
-                "expansion_topk": request.expansion_topk,
-                "use_value_fn": request.use_value_fn,
-                "one_step_type": request.one_step_type,
-                "CCS": request.CCS,
-                "radius": request.radius
-            },
-            "result": result,
-            # "route": result.get('route', []) if result else []
-        }
-        
-        # 保存JSON文件
-        json_path = os.path.join(RESULT_DIR, f"{file_name_prefix}_{task_id}.json")
+    request_data = request.model_dump()
+    request_data["CCS"] = bool(request_data.get("CCS", request_data.get("ccs", False)))
+    _set_task_progress(
+        task_id,
+        status="queued",
+        message="Task accepted and queued",
+        current_iteration=0,
+        total_iterations=int(request.iterations),
+        expanded_nodes=0,
+        max_depth=0,
+        avg_iter_seconds=None,
+        result_ready=False,
+        created_at=_iso_now(),
+        completed_at=None,
+        error=None,
+    )
+    worker = threading.Thread(
+        target=_run_prediction_task,
+        args=(task_id, request_data, file_name_prefix),
+        daemon=True,
+    )
+    worker.start()
+    return PredictionResponse(
+        task_id=task_id,
+        status="accepted",
+        message="预测任务已启动"
+    )
 
 
-                
-        # FIX: 生成高级HTML可视化
-        # 检查是否有routes字符串
-        routes_string = None
-        if result and isinstance(result, dict):
-            routes_string = result.get('routes')  # 根据实际返回结构调整键名
-        if routes_string:
-            try:
-                # 处理routes字符串并生成HTML
-                reaction_list = string2reaction_list(routes_string)
-                graph = parse_and_stitch(reaction_list)
-                positions = compute_layout(graph, x_step=280, y_step=250, margin=80)
-                html_content = build_html(graph, 200, 200, positions, f"Synthesis Path {task_id}")
-                
-                # 保存HTML文件
-                html_path = os.path.join(RESULT_DIR, f"{file_name_prefix}_{task_id}_pathview.html")
+@app.get("/api/progress/{task_id}")
+async def get_progress(task_id: str):
+    progress = _get_task_progress(task_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return JSONResponse(_build_progress_snapshot(task_id, progress))
 
-                with open(html_path, 'w', encoding='utf-8') as f:
-                    f.write(html_content)
-                
-                # 记录HTML路径到result_data
-                result_data['html_available'] = True
-            except Exception as e:
-                print(f"HTML visualization generation failed: {e}")
-                result_data['html_available'] = False
-        else:
-            result_data['html_available'] = False
 
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(result_data, f, ensure_ascii=False, indent=2)
-        with open(MAPPING_FILE, 'r+') as f:
-            mappings = json.load(f)
-            mappings[task_id] = {
-                "json": f"{file_name_prefix}_{task_id}.json",
-                "html": f"{file_name_prefix}_{task_id}_pathview.html" if result_data.get('html_available') else None
-            }
-            f.seek(0)
-            json.dump(mappings, f, indent=2)
-        return PredictionResponse(
-            task_id=task_id,
-            status="success",
-            message="预测完成"
-        )
-        
-    except Exception as e:
-        print(f"预测任务失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/history")
+async def get_history(
+    query: str = Query(default=""),
+    start: str = Query(default=""),
+    end: str = Query(default=""),
+    limit: int = Query(default=100, ge=1, le=100),
+):
+    records = _list_history_records(limit=limit, query=query, start=start, end=end)
+    return JSONResponse({"records": records, "count": len(records)})
+
+
+@app.get("/api/similar")
+async def get_similar_examples(
+    smiles: str = Query(...),
+    method: str = Query(default="ecfp4"),
+    limit: int = Query(default=3, ge=1, le=20),
+):
+    records = _find_similar_records(smiles=smiles, method=method, limit=limit)
+    return JSONResponse({"records": records, "count": len(records), "method": method})
+
 def get_file_path_by_task_id(task_id: str, file_type: str) -> str:
     """根据task_id和文件类型获取实际文件路径"""
     if not os.path.exists(MAPPING_FILE):
