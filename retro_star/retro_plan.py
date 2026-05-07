@@ -5,11 +5,13 @@ import pickle
 import random
 import sys
 import time
+import inspect
 
 import numpy as np
 import torch
 
 from common.parse_args import args
+from common.inference_run_params import build_inference_run_params
 from common.prepare_utils import prepare_mlp, prepare_molstar_planner, prepare_r_smiles, prepare_starting_molecules
 from common.smiles_to_fp import smiles_to_fp
 from model import ValueMLP
@@ -18,6 +20,13 @@ from alg.molstar_parallel import molstar_parallel
 
 
 def _resolve_runtime_config():
+    """Return (logical_cuda_index_for_models, value_torch_device).
+
+    parse_args sets CUDA_VISIBLE_DEVICES=str(args.gpu) when args.gpu >= 0, so only one
+    physical GPU is visible and it is always ``cuda:0`` inside this process. OpenNMT /
+    TP_free_Model expect an integer 0 in that case, not args.gpu (would raise invalid
+    device ordinal for --gpu 1,2,...).
+    """
     gpu_id = args.gpu
     if gpu_id >= 0 and not torch.cuda.is_available():
         logging.info('Requested gpu=%d but CUDA is unavailable; fallback to CPU/MPS where possible.', gpu_id)
@@ -25,13 +34,21 @@ def _resolve_runtime_config():
 
     if gpu_id >= 0:
         value_device = torch.device('cuda')
+        logical_cuda_index = 0
+        if args.gpu != 0:
+            logging.info(
+                'Physical GPU %d selected (CUDA_VISIBLE_DEVICES=%s); using logical cuda:%d for models.',
+                args.gpu,
+                os.environ.get('CUDA_VISIBLE_DEVICES', ''),
+                logical_cuda_index,
+            )
+        return logical_cuda_index, value_device
+    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        value_device = torch.device('mps')
+        logging.info('Using MPS device for value model inference.')
     else:
-        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            value_device = torch.device('mps')
-            logging.info('Using MPS device for value model inference.')
-        else:
-            value_device = torch.device('cpu')
-    return gpu_id, value_device
+        value_device = torch.device('cpu')
+    return -1, value_device
 
 
 def _load_routes(test_routes):
@@ -149,18 +166,27 @@ def _build_expand_batch_fn(one_step):
     if not disable_batch and hasattr(one_step, 'run_batch') and callable(one_step.run_batch):
         logging.info('One-step model supports run_batch; enabling batch expansion path.')
 
-        def expand_batch(smiles_batch):
+        batch_accepts_task_ids = 'task_ids' in inspect.signature(one_step.run_batch).parameters
+
+        def expand_batch(smiles_batch, task_ids):
+            if batch_accepts_task_ids:
+                return one_step.run_batch(smiles_batch, topk=topk, task_ids=task_ids)
             return one_step.run_batch(smiles_batch, topk=topk)
 
         return expand_batch
 
     logging.info('One-step model does not provide run_batch (or batch disabled); fallback to per-item expansion.')
 
-    def expand_batch(smiles_batch):
+    run_accepts_task_id = 'task_id' in inspect.signature(one_step.run).parameters
+
+    def expand_batch(smiles_batch, task_ids):
         outputs = []
-        for smiles in smiles_batch:
+        for smiles, tid in zip(smiles_batch, task_ids):
             try:
-                outputs.append(one_step.run(smiles, topk=topk))
+                if run_accepts_task_id:
+                    outputs.append(one_step.run(smiles, topk=topk, task_id=tid))
+                else:
+                    outputs.append(one_step.run(smiles, topk=topk))
             except Exception as exc:
                 logging.info('Expansion error for %s: %s', smiles, exc)
                 outputs.append(None)
@@ -207,9 +233,58 @@ def _record_result(result, idx, succ, msg, elapsed):
         result['route_lens'][idx] = None
 
 
+def _attach_inference_run_params(result):
+    """Attach reproducibility / correlation metadata (RD_list, topk, dataset, etc.)."""
+    d = build_inference_run_params(args)
+    if isinstance(result.get('succ'), list):
+        d['num_targets'] = len(result['succ'])
+    result['inference_run_params'] = d
+
+
 def _save_plan(result):
+    _attach_inference_run_params(result)
     with open(args.result_folder + '/plan.pkl', 'wb') as f:
         pickle.dump(result, f)
+
+
+def _attach_dict_cache_report(result, one_step):
+    if args.one_step_type != 'template_free' or not args.DICT:
+        return
+    if hasattr(one_step, 'get_dict_cache_report'):
+        _attach_inference_run_params(result)
+        report = one_step.get_dict_cache_report()
+        rp = result.get('inference_run_params')
+        if rp is not None:
+            report = dict(report)
+            report['run_params'] = rp
+        result['dict_cache_report'] = report
+
+
+def _log_dict_cache_summary(report):
+    if not report:
+        return
+    g = report.get('global') or {}
+    logging.info(
+        'DICT cache global: keys=%s values=%s lookups=%s hits=%s rate=%s (aggregation=%s)',
+        g.get('dict_num_keys'),
+        g.get('dict_num_values'),
+        g.get('substructure_lookups_total'),
+        g.get('substructure_hits_total'),
+        g.get('substructure_hit_rate'),
+        report.get('aggregation_mode'),
+    )
+    per = report.get('per_target') or []
+    if not per:
+        return
+    rates = [r.get('substructure_hit_rate') for r in per if r.get('substructure_hit_rate') is not None]
+    if rates:
+        logging.info(
+            'DICT cache per-target mean: substructure_hit_rate=%.4f new_keys=%.4f new_template_values=%.4f (n=%d)',
+            float(np.mean(rates)),
+            float(np.mean([r.get('new_keys', 0) for r in per])),
+            float(np.mean([r.get('new_template_values', 0) for r in per])),
+            len(per),
+        )
 
 
 def _log_progress(result, done_count, num_targets, t0):
@@ -254,6 +329,9 @@ def _run_serial(target_mols, starting_mols, one_step, value_fn):
         _log_progress(result, idx + 1, num_targets, t0)
         _save_plan(result)
 
+    _attach_dict_cache_report(result, one_step)
+    _save_plan(result)
+    _log_dict_cache_summary(result.get('dict_cache_report'))
     return result
 
 
@@ -291,7 +369,9 @@ def _run_parallel(target_mols, starting_mols, one_step, value_fn):
             succ, msg = output
         _record_result(result, idx, succ, msg, time.time() - t0)
 
+    _attach_dict_cache_report(result, one_step)
     _save_plan(result)
+    _log_dict_cache_summary(result.get('dict_cache_report'))
     return result
 
 
@@ -378,8 +458,9 @@ def _gpu_worker(
 
         topk = args_dict.get('expansion_topk', 8)
 
-        def expand_batch(smiles_batch):
-            return one_step.run_batch(smiles_batch, topk=topk)
+        def expand_batch(smiles_batch, task_ids):
+            global_ids = [idx_map[t] for t in task_ids]
+            return one_step.run_batch(smiles_batch, topk=topk, task_ids=global_ids)
 
         _t0 = _time.time()
         finished = _molstar_parallel(
@@ -478,7 +559,37 @@ def _run_multi_gpu(target_mols, starting_mols, one_step_cfg):
         for orig_idx, succ, msg, elapsed in worker_result:
             _record_result(result, orig_idx, succ, msg, elapsed)
 
+    if args.one_step_type == 'template_free' and args.DICT:
+        nk = 0
+        nv = 0
+        for _k, rules in shared_dict.items():
+            nk += 1
+            nv += len(rules)
+        _rp = build_inference_run_params(args)
+        _rp['num_targets'] = num_targets
+        result['dict_cache_report'] = {
+            'aggregation_mode': 'multi_gpu_shared_dict_only',
+            'per_target': [],
+            'global': {
+                'dict_num_keys': nk,
+                'dict_num_values': nv,
+                'substructure_lookups_total': None,
+                'substructure_hits_total': None,
+                'substructure_hit_rate': None,
+                'substructure_hit_counts_topk': {},
+                'template_hit_counts_topk': {},
+            },
+            'first_infer': {'key': {}, 'key_rule': {}},
+            'run_params': _rp,
+        }
+        logging.info(
+            'DICT cache (multi-GPU merged dict only): keys=%d values=%d',
+            nk,
+            nv,
+        )
+
     _save_plan(result)
+    _dump_shared_tp_free_dict_on_exit(shared_dict)
     succ_count = sum(1 for x in result['succ'] if x)
     logging.info('Multi-GPU planning done: %d/%d succeeded', succ_count, num_targets)
     return result
@@ -501,11 +612,54 @@ def _build_one_step_cfg():
     }
 
 
+def _ensure_tp_free_dict_dump_dir():
+    """Periodic DICT dumps go next to plan.pkl when TP_FREE_DICT_DUMP_DIR is unset."""
+    if args.DICT and args.one_step_type == 'template_free':
+        if not os.environ.get('TP_FREE_DICT_DUMP_DIR'):
+            os.environ['TP_FREE_DICT_DUMP_DIR'] = os.path.abspath(args.result_folder)
+            logging.info(
+                'TP_FREE_DICT_DUMP_DIR unset; defaulting to result folder: %s',
+                os.environ['TP_FREE_DICT_DUMP_DIR'],
+            )
+
+
+def _dump_tp_free_dict_on_exit(one_step):
+    """Write tp_free_DICT_final_*.pkl next to plan.pkl. Default on; set TP_FREE_DICT_DUMP_ON_EXIT=0 to skip."""
+    if os.getenv('TP_FREE_DICT_DUMP_ON_EXIT', '1') != '1':
+        return
+    if one_step is None or not hasattr(one_step, 'save_dict_snapshot'):
+        return
+    if getattr(one_step, '_dict_is_shared', False):
+        logging.info('TP_FREE_DICT_DUMP_ON_EXIT: skip local snapshot (shared dict / multi-GPU worker model).')
+        return
+    tag = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
+    path = os.path.join(args.result_folder, 'tp_free_DICT_final_%s.pkl' % tag)
+    if one_step.save_dict_snapshot(path):
+        logging.info('TP_FREE DICT final snapshot: %s', path)
+
+
+def _dump_shared_tp_free_dict_on_exit(shared_dict):
+    """Multi-GPU main process: dump merged Manager dict (default on; TP_FREE_DICT_DUMP_ON_EXIT=0 to skip)."""
+    if os.getenv('TP_FREE_DICT_DUMP_ON_EXIT', '1') != '1':
+        return
+    tag = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
+    path = os.path.join(args.result_folder, 'tp_free_DICT_final_%s.pkl' % tag)
+    with open(path, 'wb') as f:
+        pickle.dump(dict(shared_dict), f)
+    logging.info('TP_FREE shared DICT final snapshot: %s', path)
+
+
 def retro_plan():
     runtime_gpu, device = _resolve_runtime_config()
 
+    _ensure_tp_free_dict_dump_dir()
+
     starting_mols = prepare_starting_molecules(args.starting_molecules)
     routes = _load_routes(args.test_routes)
+    if getattr(args, 'route_limit', 0) and args.route_limit > 0:
+        routes = routes[: args.route_limit]
+        logging.info('route_limit=%d: using first %d targets', args.route_limit, len(routes))
+
     target_mols = [route[0].split('>')[0] for route in routes]
 
     if not os.path.exists(args.result_folder):
@@ -528,10 +682,14 @@ def retro_plan():
             'Running multi-pool planner: pool=%d, iterations=%d, topk=%d',
             args.parallel_num, args.iterations, args.expansion_topk,
         )
-        return _run_parallel(target_mols, starting_mols, one_step, value_fn)
+        out = _run_parallel(target_mols, starting_mols, one_step, value_fn)
+        _dump_tp_free_dict_on_exit(one_step)
+        return out
 
     logging.info('Running legacy serial planner.')
-    return _run_serial(target_mols, starting_mols, one_step, value_fn)
+    out = _run_serial(target_mols, starting_mols, one_step, value_fn)
+    _dump_tp_free_dict_on_exit(one_step)
+    return out
 
 
 if __name__ == '__main__':

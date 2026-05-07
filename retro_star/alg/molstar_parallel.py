@@ -4,11 +4,18 @@ import sys
 sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
 
 
-def _safe_batch_expand(expand_batch_fn, smiles_batch):
+def _safe_batch_expand(expand_batch_fn, smiles_batch, task_ids):
     if len(smiles_batch) == 0:
         return []
+    outputs = None
     try:
-        outputs = expand_batch_fn(smiles_batch)
+        outputs = expand_batch_fn(smiles_batch, task_ids)
+    except TypeError:
+        try:
+            outputs = expand_batch_fn(smiles_batch)
+        except Exception as exc:
+            logging.info("Batch expansion failed: %s", exc)
+            return [None] * len(smiles_batch)
     except Exception as exc:
         logging.info("Batch expansion failed: %s", exc)
         return [None] * len(smiles_batch)
@@ -102,7 +109,7 @@ def molstar_parallel(
                 batch_task_ids.append(task_idx)
 
         if len(batch_smiles) > 0:
-            batch_outputs = _safe_batch_expand(expand_batch_fn, batch_smiles)
+            batch_outputs = _safe_batch_expand(expand_batch_fn, batch_smiles, batch_task_ids)
             for task_idx, output in zip(batch_task_ids, batch_outputs):
                 task = active.get(task_idx)
                 if task is not None:

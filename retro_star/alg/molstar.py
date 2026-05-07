@@ -119,18 +119,26 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
         assert best_route is not None
 
     if viz:
-        if not os.path.exists(viz_dir):
-            os.makedirs(viz_dir)
+        try:
+            if not os.path.exists(viz_dir):
+                os.makedirs(viz_dir)
 
-        if mol_tree.succ:
-            if best_route.optimal:
-                f = '%s/mol_%d_route_optimal' % (viz_dir, target_mol_id)
-            else:
-                f = '%s/mol_%d_route_single' % (viz_dir, target_mol_id)
-            best_route.viz_route(f)
+            if mol_tree.succ:
+                if best_route.optimal:
+                    f = '%s/mol_%d_route_optimal' % (viz_dir, target_mol_id)
+                else:
+                    f = '%s/mol_%d_route_single' % (viz_dir, target_mol_id)
+                best_route.viz_route(f)
 
-        f = '%s/mol_%d_search_tree' % (viz_dir, target_mol_id)
-        mol_tree.viz_search_tree(f)
+            f = '%s/mol_%d_search_tree' % (viz_dir, target_mol_id)
+            mol_tree.viz_search_tree(f)
+        except Exception as exc:
+            logging.info(
+                'Visualization failed for target_mol_id=%s (install system graphviz so `dot` is on PATH; '
+                'planning result is unchanged): %s',
+                target_mol_id,
+                exc,
+            )
     end_total_nodes = len(mol_tree.mol_nodes)
     emit_progress(max(i + 1, 0), iteration_elapsed=None, status='completed' if mol_tree.succ else 'finished')
     print(f"Total searched nodes: |-{end_total_nodes}-|")

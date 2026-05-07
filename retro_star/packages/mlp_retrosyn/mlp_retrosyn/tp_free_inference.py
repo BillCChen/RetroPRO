@@ -1,5 +1,6 @@
 from __future__ import print_function
 import os
+import threading
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -62,7 +63,27 @@ class TP_free_Model(object):
         self.mapper_batch_size = int(os.getenv("TP_FREE_MAPPER_BATCH_SIZE", "256"))
         self.dict_dump_every = int(os.getenv("TP_FREE_DICT_DUMP_EVERY", "0"))
         self.dict_dump_dir = os.getenv("TP_FREE_DICT_DUMP_DIR", "")
+        self.dict_dump_with_meta = os.getenv("TP_FREE_DICT_DUMP_WITH_META", "0") == "1"
+        self._dict_stats_topk = int(os.getenv("TP_FREE_DICT_STATS_TOPK", "500"))
         self._dict_update_count = 0
+
+        # DICT cache statistics (JSON-serializable report via get_dict_cache_report).
+        self._stats_lock = threading.Lock()
+        self._per_target_stats = defaultdict(
+            lambda: {
+                "substructure_lookups": 0,
+                "substructure_hits": 0,
+                "new_keys": 0,
+                "new_template_values": 0,
+            }
+        )
+        self._global_substructure_hit_counts = defaultdict(int)
+        self._global_template_hit_counts = defaultdict(int)
+        self._global_total_substructure_lookups = 0
+        self._global_total_substructure_hits = 0
+        self._key_first_infer = {}
+        self._pair_first_infer = {}
+        self._pair_key_sep = "|||"
 
         # DICT storage: use external shared proxy when running multi-GPU workers,
         # otherwise use a local defaultdict.
@@ -195,21 +216,51 @@ class TP_free_Model(object):
             templates.append((cano_smi, template['reaction_smarts']))
         return templates
 
-    def renew_DICT(self, templates):
+    def _pair_key_str(self, cano_smi, rule):
+        return "%s%s%s" % (cano_smi, self._pair_key_sep, rule)
+
+    def _record_renew_increment(self, key, rule, is_new_key, task_id, target_smiles):
+        """Record first-infer attribution and per-target delta counts (under _stats_lock)."""
+        src = None
+        if task_id is not None:
+            src = {"task_id": int(task_id), "target_smiles": target_smiles}
+        if src is not None:
+            if is_new_key and key not in self._key_first_infer:
+                self._key_first_infer[key] = dict(src)
+            pk = self._pair_key_str(key, rule)
+            if pk not in self._pair_first_infer:
+                self._pair_first_infer[pk] = dict(src)
+        if task_id is not None:
+            pt = self._per_target_stats[task_id]
+            if is_new_key:
+                pt["new_keys"] += 1
+            pt["new_template_values"] += 1
+
+    def renew_DICT(self, templates, task_id=None, target_smiles=None):
         updated = 0
         if self._dict_is_shared:
-            # Shared Manager dict: requires lock for read-modify-write
             for key, rule in templates:
                 with self._dict_lock:
                     existing = list(self._dict_ref.get(key, []))
+                    is_new_key = len(existing) == 0
                     if rule not in existing:
                         self._dict_ref[key] = existing + [rule]
                         updated += 1
+                        with self._stats_lock:
+                            self._record_renew_increment(
+                                key, rule, is_new_key, task_id, target_smiles
+                            )
         else:
             for key, rule in templates:
-                if rule not in self._dict_ref[key]:
+                existing = self._dict_ref[key]
+                is_new_key = len(existing) == 0
+                if rule not in existing:
                     self._dict_ref[key].append(rule)
                     updated += 1
+                    with self._stats_lock:
+                        self._record_renew_increment(
+                            key, rule, is_new_key, task_id, target_smiles
+                        )
 
         self._dict_update_count += updated
         if (
@@ -220,8 +271,27 @@ class TP_free_Model(object):
         ):
             os.makedirs(self.dict_dump_dir, exist_ok=True)
             save_dir = os.path.join(self.dict_dump_dir, f"tp_free_DICT_{day_hour_min_sec}.pkl")
-            pickle.dump(dict(self._dict_ref), open(save_dir, 'wb'))
+            payload = dict(self._dict_ref)
+            if self.dict_dump_with_meta:
+                payload = {"rules": payload, "stats": self.get_dict_cache_report()}
+            pickle.dump(payload, open(save_dir, 'wb'))
             self._dict_update_count = 0
+
+    def save_dict_snapshot(self, filepath, with_meta=None):
+        """Write current DICT rules to a pickle file (local dict only; not for shared Manager dict)."""
+        if self._dict_is_shared:
+            return False
+        if with_meta is None:
+            with_meta = self.dict_dump_with_meta
+        parent = os.path.dirname(os.path.abspath(filepath))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        payload = dict(self._dict_ref)
+        if with_meta:
+            payload = {'rules': payload, 'stats': self.get_dict_cache_report()}
+        with open(filepath, 'wb') as f:
+            pickle.dump(payload, f)
+        return True
 
     def _canonicalize_target(self, x):
         try:
@@ -243,7 +313,20 @@ class TP_free_Model(object):
                 return False
         return True
 
-    def _prepare_single_target(self, x, topk):
+    def _record_cache_lookup(self, cano_smi, cached_rules, task_id):
+        with self._stats_lock:
+            self._global_total_substructure_lookups += 1
+            if task_id is not None:
+                self._per_target_stats[task_id]["substructure_lookups"] += 1
+            if len(cached_rules) > 0:
+                self._global_total_substructure_hits += 1
+                self._global_substructure_hit_counts[cano_smi] += 1
+                if task_id is not None:
+                    self._per_target_stats[task_id]["substructure_hits"] += 1
+                for r in cached_rules:
+                    self._global_template_hit_counts[r] += 1
+
+    def _prepare_single_target(self, x, topk, task_id=None):
         target = self._canonicalize_target(x)
         sampled = self.random_sampling(target, self.RD_list, topk)
 
@@ -253,6 +336,7 @@ class TP_free_Model(object):
             for smi in sampled:
                 cano_smi = self.smi2cano_smiels(smi)
                 cached_rules = self._dict_ref.get(cano_smi, [])
+                self._record_cache_lookup(cano_smi, cached_rules, task_id)
                 if len(cached_rules) > 0:
                     dict_rules.extend(cached_rules)
                     aug_smiles.extend(rand_aug_smiles(smi, 1))
@@ -340,17 +424,82 @@ class TP_free_Model(object):
             'template': templates,
         }
 
-    def run_batch(self, x_list, topk=20):
+    def _dict_num_keys(self):
+        return len(self._dict_ref)
+
+    def _dict_num_values(self):
+        n = 0
+        for _k, rules in self._dict_ref.items():
+            n += len(rules)
+        return n
+
+    def _topk_int_dict(self, counter_dict, k):
+        items = sorted(counter_dict.items(), key=lambda kv: (-kv[1], kv[0]))
+        if k > 0:
+            items = items[:k]
+        return {str(a): int(b) for a, b in items}
+
+    def get_dict_cache_report(self):
+        """Return a JSON-serializable summary of DICT cache statistics."""
+        with self._stats_lock:
+            per_target = []
+            for tid in sorted(self._per_target_stats.keys()):
+                row = dict(self._per_target_stats[tid])
+                lu = row["substructure_lookups"]
+                row["task_id"] = int(tid)
+                row["substructure_hit_rate"] = (
+                    float(row["substructure_hits"]) / float(lu) if lu else None
+                )
+                per_target.append(row)
+            sub_hits = dict(self._global_substructure_hit_counts)
+            tpl_hits = dict(self._global_template_hit_counts)
+            g_lookups = int(self._global_total_substructure_lookups)
+            g_hit = int(self._global_total_substructure_hits)
+            key_first = {str(k): dict(v) for k, v in self._key_first_infer.items()}
+            pair_first = {str(k): dict(v) for k, v in self._pair_first_infer.items()}
+            topk = self._dict_stats_topk
+
+        agg = "full"
+        if self._dict_is_shared:
+            agg = "per_worker_partial"
+
+        return {
+            "aggregation_mode": agg,
+            "global": {
+                "dict_num_keys": int(self._dict_num_keys()),
+                "dict_num_values": int(self._dict_num_values()),
+                "substructure_lookups_total": g_lookups,
+                "substructure_hits_total": g_hit,
+                "substructure_hit_rate": (float(g_hit) / float(g_lookups) if g_lookups else None),
+                "substructure_hit_counts_topk": self._topk_int_dict(sub_hits, topk),
+                "template_hit_counts_topk": self._topk_int_dict(tpl_hits, topk),
+            },
+            "per_target": per_target,
+            "first_infer": {
+                "key": key_first,
+                "key_rule": pair_first,
+            },
+        }
+
+    def run_batch(self, x_list, topk=20, task_ids=None):
         if x_list is None or len(x_list) == 0:
             return []
 
+        if task_ids is not None and len(task_ids) != len(x_list):
+            raise ValueError("task_ids must be the same length as x_list")
+
         # --- Preparation (CPU-bound RDKit) -- parallelized across molecules ---
         max_workers = min(len(x_list), 8)
+
+        def _prep_one(i):
+            tid = task_ids[i] if task_ids is not None else None
+            return self._prepare_single_target(x_list[i], topk, task_id=tid)
+
         if max_workers > 1:
             with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                prepared = list(ex.map(lambda x: self._prepare_single_target(x, topk), x_list))
+                prepared = list(ex.map(_prep_one, range(len(x_list))))
         else:
-            prepared = [self._prepare_single_target(x_list[0], topk)]
+            prepared = [_prep_one(0)]
 
         # --- Retro inference (single batched GPU call) ---
         flat_aug_smiles = []
@@ -449,7 +598,8 @@ class TP_free_Model(object):
             templates = self._extract_templates_from_mapped(ccs_slice, mapped_slice)
 
             if self.use_DICT:
-                self.renew_DICT(templates)
+                _tid = task_ids[owner_idx] if task_ids is not None else None
+                self.renew_DICT(templates, task_id=_tid, target_smiles=target)
 
             rule_k = [rule for _, rule in templates]
             sum_rule = (item['dict_rules'] + rule_k) if self.use_DICT else rule_k
@@ -457,8 +607,11 @@ class TP_free_Model(object):
 
         return outputs
 
-    def run(self, x, topk=20):
-        outputs = self.run_batch([x], topk=topk)
+    def run(self, x, topk=20, task_id=None):
+        if task_id is None:
+            outputs = self.run_batch([x], topk=topk, task_ids=None)
+        else:
+            outputs = self.run_batch([x], topk=topk, task_ids=[task_id])
         if len(outputs) == 0:
             return None
         return outputs[0]

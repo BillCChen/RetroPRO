@@ -84,7 +84,7 @@ def test_run_batch_batches_model_calls():
     # New internal attributes added after refactor
     model._dict_ref = {}
     model._dict_is_shared = False
-    model._prepare_single_target = lambda x, topk: {
+    model._prepare_single_target = lambda x, topk, task_id=None: {
         'target': x,
         'aug_smiles': [f'{x}_1', f'{x}_2'],
         'dict_rules': [],
@@ -119,7 +119,7 @@ def test_run_batch_batches_model_calls():
 
 def test_run_delegates_to_run_batch():
     model = object.__new__(TP_free_Model)
-    model.run_batch = lambda x_list, topk=20: [{'target': x_list[0], 'topk': topk}]
+    model.run_batch = lambda x_list, topk=20, task_ids=None: [{'target': x_list[0], 'topk': topk}]
 
     out = TP_free_Model.run(model, 'CCC', topk=7)
 

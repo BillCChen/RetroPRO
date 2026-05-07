@@ -22,6 +22,12 @@ parser.add_argument('--seed', type=int, default=1234)
 # ==================== dataset ===================== #
 parser.add_argument('--test_routes',
                     default='uspto190')
+parser.add_argument(
+    '--route_limit',
+    type=int,
+    default=0,
+    help='If >0, only the first N targets from test_routes are used (e.g. quick smoke on pth_hard).',
+)
 parser.add_argument('--starting_molecules', default='dataset/origin_dict.csv')
 
 # ================== value dataset ================= #
@@ -118,5 +124,6 @@ for k, v in standard_args.items():
 import yaml
 with open(os.path.join(args.result_folder, 'args.yaml'), 'w') as f:
     yaml.dump(vars(args), f)
-# setup device
-os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+# 只暴露一块物理 GPU；进程内 PyTorch 始终用 cuda:0 访问它（勿再传 logical id = args.gpu）
+if args.gpu >= 0:
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)

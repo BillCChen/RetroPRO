@@ -8,6 +8,7 @@ import os
 # from common import args, prepare_starting_molecules, prepare_mlp,prepare_r_smiles, \
 #     prepare_molstar_planner, smiles_to_fp
 from common.parse_args import args
+from common.inference_run_params import build_inference_run_params
 from common.prepare_utils import prepare_starting_molecules , prepare_mlp , prepare_r_smiles , prepare_molstar_planner
 from common.prepare_utils import *
 from common.smiles_to_fp import smiles_to_fp, batch_smiles_to_fp
@@ -25,6 +26,9 @@ def retro_plan():
         import ast
         args.RD_list = ast.literal_eval(args.RD_list)
         logging.info("Parsed RD_list: %s" % args.RD_list)
+        if args.DICT and not os.environ.get('TP_FREE_DICT_DUMP_DIR'):
+            os.environ['TP_FREE_DICT_DUMP_DIR'] = os.path.abspath(args.result_folder)
+            logging.info('TP_FREE_DICT_DUMP_DIR -> %s', os.environ['TP_FREE_DICT_DUMP_DIR'])
         one_step = prepare_r_smiles(args.retro_model_path,args.retro_topk,args.forward_model_path,args.forward_topk,args.CSS,args.RD_list,args.DICT)
     else:
         raise ValueError("Unknown one step model type: %s" % args.one_step_type)
@@ -133,10 +137,48 @@ def retro_plan():
         logging.info('Succ: %d/%d/%d | avg time: %.2f s | avg iter: %.2f' %
                      (tot_succ, tot_num, num_targets, avg_time, avg_iter))
 
+        result['inference_run_params'] = build_inference_run_params(args)
+        result['inference_run_params']['num_targets'] = len(result['succ'])
+
+        if args.one_step_type == 'template_free' and args.DICT and hasattr(one_step, 'get_dict_cache_report'):
+            report = one_step.get_dict_cache_report()
+            rp = result.get('inference_run_params')
+            if rp is not None:
+                report = dict(report)
+                report['run_params'] = rp
+            result['dict_cache_report'] = report
+            g = result['dict_cache_report'].get('global') or {}
+            logging.info(
+                'DICT cache global: keys=%s values=%s lookups=%s hits=%s rate=%s',
+                g.get('dict_num_keys'),
+                g.get('dict_num_values'),
+                g.get('substructure_lookups_total'),
+                g.get('substructure_hits_total'),
+                g.get('substructure_hit_rate'),
+            )
+            per = result['dict_cache_report'].get('per_target') or []
+            if per:
+                rates = [r.get('substructure_hit_rate') for r in per if r.get('substructure_hit_rate') is not None]
+                if rates:
+                    logging.info(
+                        'DICT cache per-target mean: substructure_hit_rate=%.4f new_keys=%.4f new_template_values=%.4f (n=%d)',
+                        float(np.mean(rates)),
+                        float(np.mean([r.get('new_keys', 0) for r in per])),
+                        float(np.mean([r.get('new_template_values', 0) for r in per])),
+                        len(per),
+                    )
+
         f = open(args.result_folder + '/plan.pkl', 'wb')
         pickle.dump(result, f)
         f.close()
         logging.info('Results saved to \n  ====> %s/plan.pkl' % args.result_folder)
+
+    if args.one_step_type == 'template_free' and args.DICT and os.getenv('TP_FREE_DICT_DUMP_ON_EXIT', '1') == '1':
+        if hasattr(one_step, 'save_dict_snapshot') and not getattr(one_step, '_dict_is_shared', False):
+            tag = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
+            path = os.path.join(args.result_folder, 'tp_free_DICT_final_%s.pkl' % tag)
+            if one_step.save_dict_snapshot(path):
+                logging.info('TP_FREE DICT final snapshot: %s', path)
 
 if __name__ == '__main__':
     np.random.seed(args.seed)

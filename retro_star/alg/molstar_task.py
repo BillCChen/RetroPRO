@@ -164,18 +164,26 @@ class MolStarTask:
             best_route = self.mol_tree.get_best_route()
 
         if self.viz:
-            if not os.path.exists(self.viz_dir):
-                os.makedirs(self.viz_dir)
+            try:
+                if not os.path.exists(self.viz_dir):
+                    os.makedirs(self.viz_dir)
 
-            if self.mol_tree.succ and best_route is not None:
-                if best_route.optimal:
-                    route_file = '%s/mol_%d_route_optimal' % (self.viz_dir, self.target_mol_id)
-                else:
-                    route_file = '%s/mol_%d_route_single' % (self.viz_dir, self.target_mol_id)
-                best_route.viz_route(route_file)
+                if self.mol_tree.succ and best_route is not None:
+                    if best_route.optimal:
+                        route_file = '%s/mol_%d_route_optimal' % (self.viz_dir, self.target_mol_id)
+                    else:
+                        route_file = '%s/mol_%d_route_single' % (self.viz_dir, self.target_mol_id)
+                    best_route.viz_route(route_file)
 
-            tree_file = '%s/mol_%d_search_tree' % (self.viz_dir, self.target_mol_id)
-            self.mol_tree.viz_search_tree(tree_file)
+                tree_file = '%s/mol_%d_search_tree' % (self.viz_dir, self.target_mol_id)
+                self.mol_tree.viz_search_tree(tree_file)
+            except Exception as exc:
+                logging.info(
+                    'Visualization failed for target_id=%d (install system graphviz so `dot` is on PATH; '
+                    'planning result is unchanged): %s',
+                    self.target_mol_id,
+                    exc,
+                )
 
         end_total_nodes = len(self.mol_tree.mol_nodes)
         return self.mol_tree.succ, (best_route, self.steps_taken, end_total_nodes)
