@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_URL="${APP_URL:-http://127.0.0.1:18000}"
+APP_URL="${APP_URL:-http://127.0.0.1:18100}"
 EDGE_URL="${EDGE_URL:-http://127.0.0.1}"
 RUN_PREDICT="false"
 

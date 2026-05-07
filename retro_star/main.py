@@ -922,7 +922,7 @@ async def serve_frontend():
 if __name__ == "__main__":
     import uvicorn
     host = os.getenv("RETROTMP_HOST", "127.0.0.1")
-    port = int(os.getenv("RETROTMP_PORT", "18000"))
+    port = int(os.getenv("RETROTMP_PORT", "18100"))
     uvicorn.run(app, host=host, port=port)
 
 

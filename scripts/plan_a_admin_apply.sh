@@ -180,7 +180,7 @@ REPO_DIR=${REPO_DIR}
 APP_DIR=${APP_DIR}
 PYTHON_BIN=${PYTHON_BIN}
 RETROTMP_HOST=127.0.0.1
-RETROTMP_PORT=18000
+RETROTMP_PORT=18100
 RETROTMP_STARTING_MOLS_PATH=${STARTING_MOLS}
 ENV
 
@@ -252,4 +252,4 @@ fi
 echo "[done] deployment applied"
 echo "[check] systemd: systemctl status retropro-plan-a --no-pager"
 echo "[check] nginx:   systemctl status nginx --no-pager"
-echo "[check] local:   curl -I http://127.0.0.1:18000/ && curl -I http://127.0.0.1/"
+echo "[check] local:   curl -I http://127.0.0.1:18100/ && curl -I http://127.0.0.1/"

@@ -32,7 +32,7 @@ done
 
 # Explicitly deny application ports from outside
 ufw deny 8000/tcp comment 'Block direct FastAPI 8000'
-ufw deny 18000/tcp comment 'Block internal FastAPI 18000'
+ufw deny 18100/tcp comment 'Block internal FastAPI 18100'
 
 ufw --force enable
 ufw status verbose

@@ -59,13 +59,13 @@ which cloudflared
 ```bash
 # 例：以 FastAPI + uvicorn 为例
 cd <app_dir>
-python -m uvicorn <module>:<app_object> --host 127.0.0.1 --port 18000
+python -m uvicorn <module>:<app_object> --host 127.0.0.1 --port 18100
 ```
 
 另开终端验证：
 
 ```bash
-curl --noproxy '*' -i http://127.0.0.1:18000/
+curl --noproxy '*' -i http://127.0.0.1:18100/
 ```
 
 说明：
@@ -79,7 +79,7 @@ curl --noproxy '*' -i http://127.0.0.1:18000/
 
 ```bash
 export WEB_HOST=127.0.0.1
-export WEB_PORT=18000
+export WEB_PORT=18100
 
 # 认证（建议开启）
 export WEB_BASIC_AUTH_ENABLED=true
@@ -96,12 +96,12 @@ export WEB_RATE_LIMIT_WINDOW_SEC=60
 
 ```bash
 # 1) 启动应用（按你的项目实际命令替换）
-nohup python -m uvicorn <module>:<app_object> --host 127.0.0.1 --port 18000 \
+nohup python -m uvicorn <module>:<app_object> --host 127.0.0.1 --port 18100 \
   > ./web_runtime/app.log 2>&1 &
 echo $! > ./web_runtime/app.pid
 
 # 2) 启动 cloudflared
-nohup cloudflared tunnel --url http://127.0.0.1:18000 \
+nohup cloudflared tunnel --url http://127.0.0.1:18100 \
   > ./web_runtime/cloudflared.log 2>&1 &
 echo $! > ./web_runtime/cloudflared.pid
 
@@ -168,7 +168,7 @@ python -m pip install uvicorn
 
 ```bash
 env | grep -i proxy
-curl --noproxy '*' -i http://127.0.0.1:18000/
+curl --noproxy '*' -i http://127.0.0.1:18100/
 ```
 
 ### 8.3 `ExecutableNotFound: dot`

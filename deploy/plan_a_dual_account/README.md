@@ -31,16 +31,16 @@ export STARTING_MOLS="$APP_DIR/dataset/origin_dict.csv"
 
 ```bash
 cd "$APP_DIR"
-RETROTMP_HOST=127.0.0.1 RETROTMP_PORT=18000 \
+RETROTMP_HOST=127.0.0.1 RETROTMP_PORT=18100 \
 RETROTMP_STARTING_MOLS_PATH="$STARTING_MOLS" \
-"$PYTHON_BIN" -m uvicorn main:app --host 127.0.0.1 --port 18000
+"$PYTHON_BIN" -m uvicorn main:app --host 127.0.0.1 --port 18100
 ```
 
 3. 另开终端本机检查：
 
 ```bash
-curl -I http://127.0.0.1:18000/
-curl -sS -X POST http://127.0.0.1:18000/api/preview-smiles \
+curl -I http://127.0.0.1:18100/
+curl -sS -X POST http://127.0.0.1:18100/api/preview-smiles \
   -H 'Content-Type: application/json' -d '{"smiles":"CCOCC"}'
 ```
 
@@ -168,7 +168,7 @@ sudo bash "$REPO_DIR/deploy/plan_a_dual_account/ufw/apply_firewall_temp_public80
 1. 服务器本机：
 
 ```bash
-curl -I http://127.0.0.1:18000/
+curl -I http://127.0.0.1:18100/
 curl -I http://127.0.0.1/
 ```
 
@@ -177,7 +177,7 @@ curl -I http://127.0.0.1/
 - 提交一次任务，验证 `/api/predict` -> `/api/result/{task_id}` -> 下载 JSON/HTML。
 
 3. 安全验证：
-- 端口 `8000/18000` 外部不可达。
+- 端口 `8000/18100` 外部不可达。
 - 非白名单来源访问 `80` 被拒绝（或需要 basic auth）。
 
 ## 5. 仅在直连失败时启用 FRP 兜底

@@ -128,6 +128,6 @@ python retro_plan.py \
 # Run from:  cd retro_star/
 
 RETROTMP_HOST=127.0.0.1 \
-RETROTMP_PORT=18000 \
+RETROTMP_PORT=18100 \
 RETROTMP_STARTING_MOLS_PATH="$(pwd)/dataset/origin_dict.csv" \
-python -m uvicorn main:app --host 127.0.0.1 --port 18000
+python -m uvicorn main:app --host 127.0.0.1 --port 18100

@@ -76,7 +76,7 @@ cd "${APP_DIR}"
 REPO_DIR="$(cd "${APP_DIR}/.." && pwd)"
 
 export RETROTMP_HOST=127.0.0.1
-export RETROTMP_PORT=18000
+export RETROTMP_PORT=18100
 export RETROTMP_STARTING_MOLS_PATH="${STARTING_MOLS}"
 
 LOG_FILE="${APP_DIR}/plan_a_boot_check.log"
@@ -90,12 +90,12 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[step] starting uvicorn for local boot check"
-"${PYTHON_BIN}" -m uvicorn main:app --host 127.0.0.1 --port 18000 >"${LOG_FILE}" 2>&1 &
+"${PYTHON_BIN}" -m uvicorn main:app --host 127.0.0.1 --port 18100 >"${LOG_FILE}" 2>&1 &
 APP_PID="$!"
 
 echo "[step] waiting for service readiness"
 for i in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:18000/ >/dev/null 2>&1; then
+  if curl -fsS http://127.0.0.1:18100/ >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -108,6 +108,6 @@ for i in $(seq 1 30); do
 done
 
 echo "[step] running smoke checks"
-APP_URL="http://127.0.0.1:18000" EDGE_URL="http://127.0.0.1:18000" bash "${REPO_DIR}/scripts/plan_a_smoke_test.sh"
+APP_URL="http://127.0.0.1:18100" EDGE_URL="http://127.0.0.1:18100" bash "${REPO_DIR}/scripts/plan_a_smoke_test.sh"
 
 echo "[done] app boot check passed"

@@ -4,7 +4,7 @@
 
 1. `start_web.sh`
 - 一键清理旧残留后启动：
-  - `uvicorn`（默认 `0.0.0.0:18000`）
+  - `uvicorn`（默认 `0.0.0.0:18100`）
   - `cloudflared quick tunnel`
 - 在终端打印可访问公网 URL（`trycloudflare`）
 - 默认启用 Basic Auth
@@ -32,7 +32,7 @@ bash web_scripts/clean_web.sh
 
 - `PYTHON_BIN`：指定 Python 可执行文件
 - `CLOUDFLARED_BIN`：指定 cloudflared 路径
-- `RETROTMP_PORT`：默认 `18000`
+- `RETROTMP_PORT`：默认 `18100`
 - `RETROTMP_STARTING_MOLS_PATH`：起始分子文件路径
 - `RETROTMP_BASIC_AUTH_ENABLED`：`true/false`
 - `RETROTMP_BASIC_AUTH_USER`：默认 `retropro`

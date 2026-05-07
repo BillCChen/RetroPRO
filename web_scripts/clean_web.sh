@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="${SCRIPT_DIR}/runtime"
-PORT="${RETROTMP_PORT:-18000}"
+PORT="${RETROTMP_PORT:-18100}"
 QUIET="false"
 KEEP_LOGS="false"
 
