@@ -15,8 +15,8 @@ conda activate unirxn
 
 export TP_FREE_DICT_DUMP_ON_EXIT="${TP_FREE_DICT_DUMP_ON_EXIT:-1}"
 
-python retro_plan.py --seed 42 --use_value_fn --viz --gpu 0 \
-  --expansion_topk 8 --iterations 51 \
-  --one_step_type template_free --CSS --RD_list "[(7,2)]" --DICT \
+python retro_plan.py --seed 42 --use_value_fn --viz --gpu 1 \
+  --expansion_topk 8 --iterations 101 \
+  --one_step_type template_free --CSS --RD_list "[(9,0)]" --DICT \
   --test_routes pth_hard \
   --route_limit 10
