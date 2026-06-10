@@ -5,6 +5,9 @@ dataset/
 database/
 one_step_model/
 *.log
+*.err
+*.out
+job.srp*
 *.ipynb
 __pycache__/
 .venv_multi/
