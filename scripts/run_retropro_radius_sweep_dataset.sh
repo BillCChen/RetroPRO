@@ -13,7 +13,7 @@ Usage:
     [--gpu 0] [--timestamp YYYYMMDD_HHMMSS] \
     [--radius-group odd|even|all] \
     [--radii 1,3,5] \
-    [--collect-expansion-data]
+    [--no-collect-expansion-data]
 
 Runs RetroPRO radius sweep experiments with fixed parameters:
   one_step_type=template_free
@@ -23,6 +23,7 @@ Runs RetroPRO radius sweep experiments with fixed parameters:
   iterations=1000
   seed=42
   RD_list=[(R,0)] for each selected radius
+  collect_expansion_data=on
 
 Environment overrides:
   SEED=42
@@ -41,7 +42,7 @@ GPU="${GPU:-0}"
 TIMESTAMP="${TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 RADIUS_GROUP="${RADIUS_GROUP:-all}"
 CUSTOM_RADII=""
-COLLECT_EXPANSION_DATA=0
+COLLECT_EXPANSION_DATA=1
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -83,6 +84,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --collect-expansion-data)
       COLLECT_EXPANSION_DATA=1
+      shift
+      ;;
+    --no-collect-expansion-data)
+      COLLECT_EXPANSION_DATA=0
       shift
       ;;
     -h|--help)

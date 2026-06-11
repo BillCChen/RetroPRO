@@ -18,6 +18,8 @@ Runs one dataset's RetroPRO template-free CSS/DICT 2x2 ablation matrix:
   retropro_css0_dict1_topk8
   retropro_css1_dict1_topk8
 
+Expansion data collection is enabled for every run.
+
 Output folder:
   OUTPUT_ROOT/DATASET_LABEL_css_dict_ablation_topk8_iter1000_TIMESTAMP/
 
@@ -146,6 +148,7 @@ run_one() {
     --iterations "$ITERATIONS"
     --gpu "$GPU"
     --test_routes "$DATASET"
+    --collect_expansion_data
     --result_folder "$result_dir"
     --viz_dir "$result_dir/viz"
   )

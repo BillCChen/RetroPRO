@@ -46,6 +46,7 @@ for rd in "${RD_LISTS[@]}"; do
     --expansion_topk 8 --iterations 101 \
     --one_step_type template_free --CSS --RD_list "${rd}" --DICT \
     --test_routes pth_hard \
+    --collect_expansion_data \
     --route_limit 101 \
     --result_folder "${result_dir}" 2>&1 | tee -a "${WRAPPER_LOG}"
 
