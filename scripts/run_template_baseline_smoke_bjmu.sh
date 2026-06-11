@@ -170,6 +170,20 @@ sed \
   -e "s|\\\$ROOT/PDVN/.venv/bin/python|$PDVN_PYTHON_BIN|g" \
   -e "s|\\\$ROOT/desp/.venv/bin/python|$DESP_PYTHON_BIN|g" \
   "$LAUNCHER" > "$PATCHED_LAUNCHER"
+PDVN_PYTHONPATH="$TEMPLATE_ROOT/PDVN:$TEMPLATE_ROOT/PDVN/retro_star/packages/rdchiral:$TEMPLATE_ROOT/PDVN/retro_star/packages/mlp_retrosyn"
+python3 - "$PATCHED_LAUNCHER" "$PDVN_PYTHONPATH" <<'PY_PATCHED_LAUNCHER'
+from pathlib import Path
+import sys
+
+launcher = Path(sys.argv[1])
+pdvn_pythonpath = sys.argv[2]
+text = launcher.read_text()
+text = text.replace(
+    "cd '$ROOT/PDVN/retro_star';",
+    f"export PYTHONPATH='{pdvn_pythonpath}':${{PYTHONPATH:-}}; cd '$ROOT/PDVN/retro_star';",
+)
+launcher.write_text(text)
+PY_PATCHED_LAUNCHER
 chmod +x "$PATCHED_LAUNCHER"
 
 RUN_SUFFIX="smoke_bjmu_${DATASET}_limit${LIMIT}_retrotopk${RETRO_TOPK}_iter${ITERATION_LIMIT}"
