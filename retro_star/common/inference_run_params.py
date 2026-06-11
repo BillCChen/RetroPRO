@@ -37,6 +37,7 @@ def build_inference_run_params(args):
         'CSS': bool(getattr(args, 'CSS', False)),
         'DICT': bool(getattr(args, 'DICT', False)),
         'iterations': int(getattr(args, 'iterations', 0) or 0),
+        'collect_expansion_data': bool(getattr(args, 'collect_expansion_data', False)),
         'parallel_num': int(getattr(args, 'parallel_num', 0) or 0),
         'multi_pool': bool(getattr(args, 'multi_pool', False)),
         'gpu': int(getattr(args, 'gpu', -1)),

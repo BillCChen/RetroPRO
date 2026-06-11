@@ -59,6 +59,11 @@ parser.add_argument('--DICT', action='store_true')
 parser.add_argument('--iterations', type=int, default=100)
 parser.add_argument('--expansion_topk', type=int, default=50)
 parser.add_argument('--viz', action='store_true')
+parser.add_argument(
+    '--collect_expansion_data',
+    action='store_true',
+    help='Write raw node expansion and reaction candidate JSONL files under result_folder/expansion_data.',
+)
 
 
 # ===================== model ====================== #

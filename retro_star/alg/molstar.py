@@ -8,7 +8,8 @@ import time
 import rdkit
 from rdkit import Chem
 def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
-            iterations, viz=False, viz_dir=None, progress_callback=None):
+            iterations, viz=False, viz_dir=None, progress_callback=None,
+            expansion_collector=None):
     mol_tree = MolTree(
         target_mol=target_mol,
         known_mols=starting_mols,
@@ -75,20 +76,63 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
                 costs_list = []
                 reactant_lists = []
                 templates_list = []
+                candidate_records = []
+                ancestors = m_next.get_ancestors()
                 for j in range(len(scores)):
                     reactant_list = list(set(reactants[j].split('.')))
                     # 检查每个反应物是否都有效
                     valid = True
+                    invalid_reactants = []
                     for r in reactant_list:
                         if Chem.MolFromSmiles(r) is None:
                             valid = False
+                            invalid_reactants.append(r)
                             logging.info('Invalid reactant %s from expansion of %s' % (r, m_next.mol))
                             break
+                    has_ancestor_reactant = any(r in ancestors for r in reactant_list)
+                    if expansion_collector is not None:
+                        candidate_records.append({
+                            'target_id': int(target_mol_id),
+                            'target_mol': target_mol,
+                            'iteration': int(i + 1),
+                            'expanded_mol': m_next.mol,
+                            'expanded_mol_id': int(m_next.id),
+                            'expanded_mol_depth': int(m_next.depth),
+                            'reaction_depth': int(m_next.depth + 1),
+                            'candidate_rank': int(j + 1),
+                            'reactants_raw': reactants[j],
+                            'reactants': reactant_list,
+                            'score': float(scores[j]),
+                            'cost': float(cost[j]),
+                            'template': templates[j],
+                            'valid': bool(valid),
+                            'invalid_reactants': invalid_reactants,
+                            'has_ancestor_reactant': bool(has_ancestor_reactant),
+                            'expected_added_to_tree': bool(valid and not has_ancestor_reactant),
+                        })
                     if valid:
                         reactant_lists.append(reactant_list)
                         templates_list.append(templates[j])
                         costs_list.append(cost[j])
 
+                if expansion_collector is not None:
+                    for record in candidate_records:
+                        expansion_collector.record_reaction_candidate(record)
+                    expansion_collector.record_node_expansion(
+                        target_id=target_mol_id,
+                        target_mol=target_mol,
+                        iteration=i + 1,
+                        expanded_mol_node=m_next,
+                        search_status=mol_tree.search_status,
+                        root_succ_value=mol_tree.root.succ_value,
+                        num_model_candidates=len(scores),
+                        num_valid_candidates=len(costs_list),
+                        num_expected_added_candidates=sum(
+                            1 for record in candidate_records
+                            if record['expected_added_to_tree']
+                        ),
+                        failure_reason=None if len(costs_list) > 0 else 'no_valid_candidates',
+                    )
 
                 assert m_next.open
                 succ = mol_tree.expand(m_next, reactant_lists, costs_list, templates_list)
@@ -105,6 +149,22 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
                     break
 
             else:
+                if expansion_collector is not None:
+                    failure_reason = 'no_model_output'
+                    if result is not None and ('scores' not in result or len(result.get('scores', [])) == 0):
+                        failure_reason = 'no_scores'
+                    expansion_collector.record_node_expansion(
+                        target_id=target_mol_id,
+                        target_mol=target_mol,
+                        iteration=i + 1,
+                        expanded_mol_node=m_next,
+                        search_status=mol_tree.search_status,
+                        root_succ_value=mol_tree.root.succ_value,
+                        num_model_candidates=0,
+                        num_valid_candidates=0,
+                        num_expected_added_candidates=0,
+                        failure_reason=failure_reason,
+                    )
                 mol_tree.expand(m_next, None, None, None)
                 logging.info('Expansion fails on %s!' % m_next.mol)
             end = time.time()

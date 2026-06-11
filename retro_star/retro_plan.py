@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from common.parse_args import args
+from common.expansion_data_collector import ExpansionDataCollector
 from common.inference_run_params import build_inference_run_params
 from common.prepare_utils import prepare_mlp, prepare_molstar_planner, prepare_r_smiles, prepare_starting_molecules
 from common.smiles_to_fp import smiles_to_fp
@@ -304,6 +305,18 @@ def _log_progress(result, done_count, num_targets, t0):
 
 
 def _run_serial(target_mols, starting_mols, one_step, value_fn):
+    expansion_collector = None
+    if args.collect_expansion_data:
+        expansion_collector = ExpansionDataCollector(
+            result_folder=args.result_folder,
+            run_params=build_inference_run_params(args),
+            target_mols=target_mols,
+        )
+        logging.info(
+            'Expansion data collection enabled: %s',
+            os.path.join(args.result_folder, 'expansion_data'),
+        )
+
     plan_handle = prepare_molstar_planner(
         one_step=one_step,
         value_fn=value_fn,
@@ -312,22 +325,27 @@ def _run_serial(target_mols, starting_mols, one_step, value_fn):
         iterations=args.iterations,
         viz=args.viz,
         viz_dir=args.viz_dir,
+        expansion_collector=expansion_collector,
     )
 
     num_targets = len(target_mols)
     result = _init_result(num_targets)
     t0 = time.time()
 
-    for idx, target_mol in enumerate(target_mols):
-        try:
-            succ, msg = plan_handle(target_mol, idx)
-        except Exception as exc:
-            logging.info('Error planning for target %d: %s', idx, exc)
-            succ, msg = False, (None, args.iterations, None)
+    try:
+        for idx, target_mol in enumerate(target_mols):
+            try:
+                succ, msg = plan_handle(target_mol, idx)
+            except Exception as exc:
+                logging.info('Error planning for target %d: %s', idx, exc)
+                succ, msg = False, (None, args.iterations, None)
 
-        _record_result(result, idx, succ, msg, time.time() - t0)
-        _log_progress(result, idx + 1, num_targets, t0)
-        _save_plan(result)
+            _record_result(result, idx, succ, msg, time.time() - t0)
+            _log_progress(result, idx + 1, num_targets, t0)
+            _save_plan(result)
+    finally:
+        if expansion_collector is not None:
+            expansion_collector.close()
 
     _attach_dict_cache_report(result, one_step)
     _save_plan(result)
