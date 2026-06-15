@@ -13,6 +13,9 @@ Usage:
     [--python-bin /abs/path/env/bin/python] \
     [--gpu 0] [--template-gpu 0] [--timestamp YYYYMMDD_HHMMSS] \
     [--template-root /abs/path/test_synthetic_route_planning] \
+    [--template-launcher /abs/path/launch_pistachio_template_runs.sh] \
+    [--desp-python-bin /abs/path/conda_env/desp/bin/python] \
+    [--pdvn-python-bin /abs/path/conda_env/pdvn/bin/python] \
     [--run-template-baselines]
 
 Runs the RetroPRO part of the paper 6-method subset:
@@ -30,6 +33,9 @@ Environment overrides:
   EXPANSION_TOPK=8
   RD_LIST='[(7,0),(3,0)]'
   PYTHONPATH_EXTRA=/extra/path
+  TEMPLATE_LAUNCHER=/abs/path/launch_pistachio_template_runs.sh
+  DESP_PYTHON_BIN=/abs/path/conda_env/desp/bin/python
+  PDVN_PYTHON_BIN=/abs/path/conda_env/pdvn/bin/python
 USAGE
 }
 
@@ -43,6 +49,9 @@ GPU="${GPU:-0}"
 TEMPLATE_GPU="${TEMPLATE_GPU:-}"
 TIMESTAMP="${TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 TEMPLATE_ROOT="${TEMPLATE_ROOT:-}"
+TEMPLATE_LAUNCHER="${TEMPLATE_LAUNCHER:-}"
+DESP_PYTHON_BIN="${DESP_PYTHON_BIN:-}"
+PDVN_PYTHON_BIN="${PDVN_PYTHON_BIN:-}"
 RUN_TEMPLATE_BASELINES=0
 DESP_TEST_PATH="${DESP_TEST_PATH:-}"
 PDVN_SOURCE_TXT="${PDVN_SOURCE_TXT:-}"
@@ -88,6 +97,18 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --template-root)
       TEMPLATE_ROOT="$2"
+      shift 2
+      ;;
+    --template-launcher)
+      TEMPLATE_LAUNCHER="$2"
+      shift 2
+      ;;
+    --desp-python-bin)
+      DESP_PYTHON_BIN="$2"
+      shift 2
+      ;;
+    --pdvn-python-bin)
+      PDVN_PYTHON_BIN="$2"
       shift 2
       ;;
     --desp-test-path)
@@ -217,14 +238,65 @@ run_template_baselines() {
     exit 1
   fi
 
-  local launcher="$TEMPLATE_ROOT/remote_jobs/launch_pistachio_template_runs.sh"
+  local launcher="$TEMPLATE_LAUNCHER"
+  if [[ -z "$launcher" ]]; then
+    launcher="$TEMPLATE_ROOT/remote_jobs/launch_pistachio_template_runs.sh"
+  fi
+  if [[ ! -f "$launcher" && -f "$TEMPLATE_ROOT/artifacts/inference_scripts/launch_pistachio_template_runs.sh" ]]; then
+    launcher="$TEMPLATE_ROOT/artifacts/inference_scripts/launch_pistachio_template_runs.sh"
+  fi
   if [[ ! -f "$launcher" ]]; then
     echo "[error] template launcher not found: $launcher" >&2
     exit 1
   fi
 
+  local template_parent
+  template_parent="$(cd "$TEMPLATE_ROOT/.." && pwd)"
+  local desp_python_bin="$DESP_PYTHON_BIN"
+  local pdvn_python_bin="$PDVN_PYTHON_BIN"
+  if [[ -z "$desp_python_bin" && -x "$template_parent/conda_env/desp/bin/python" ]]; then
+    desp_python_bin="$template_parent/conda_env/desp/bin/python"
+  fi
+  if [[ -z "$pdvn_python_bin" && -x "$template_parent/conda_env/pdvn/bin/python" ]]; then
+    pdvn_python_bin="$template_parent/conda_env/pdvn/bin/python"
+  fi
+  if [[ -n "$desp_python_bin" && ! -x "$desp_python_bin" ]]; then
+    echo "[error] DESP python bin not executable: $desp_python_bin" >&2
+    exit 1
+  fi
+  if [[ -n "$pdvn_python_bin" && ! -x "$pdvn_python_bin" ]]; then
+    echo "[error] PDVN python bin not executable: $pdvn_python_bin" >&2
+    exit 1
+  fi
+
   local patched_launcher="$run_root/launch_template_baselines_${DATASET_LABEL}.sh"
   sed "s|^ROOT=.*|ROOT=\"$TEMPLATE_ROOT\"|" "$launcher" > "$patched_launcher"
+  python3 - "$patched_launcher" "$TEMPLATE_ROOT" "$desp_python_bin" "$pdvn_python_bin" <<'PY_PATCHED_LAUNCHER'
+from pathlib import Path
+import sys
+
+launcher = Path(sys.argv[1])
+template_root = sys.argv[2]
+desp_python = sys.argv[3]
+pdvn_python = sys.argv[4]
+text = launcher.read_text()
+if desp_python:
+    text = text.replace("$ROOT/desp/.venv/bin/python", desp_python)
+if pdvn_python:
+    text = text.replace("$ROOT/PDVN/.venv/bin/python", pdvn_python)
+pdvn_pythonpath = ":".join(
+    [
+        f"{template_root}/PDVN",
+        f"{template_root}/PDVN/retro_star/packages/rdchiral",
+        f"{template_root}/PDVN/retro_star/packages/mlp_retrosyn",
+    ]
+)
+text = text.replace(
+    "cd '$ROOT/PDVN/retro_star';",
+    f"export PYTHONPATH='{pdvn_pythonpath}':${{PYTHONPATH:-}}; cd '$ROOT/PDVN/retro_star';",
+)
+launcher.write_text(text)
+PY_PATCHED_LAUNCHER
   chmod +x "$patched_launcher"
 
   local run_suffix="${DATASET_LABEL}_paper_6methods_retrotopk${EXPANSION_TOPK}_template_iter${TEMPLATE_ITERATIONS}"
