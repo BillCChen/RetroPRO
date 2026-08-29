@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from queue import Queue
 import logging
@@ -29,7 +30,7 @@ class MolTree:
     def _add_mol_node(self, mol, parent):
         is_known = mol in self.known_mols
 
-        init_value = self.value_fn(mol)
+        init_value = float(os.getenv("RETROPRO_VALUE_ALPHA", "1.0")) * self.value_fn(mol)
 
         mol_node = MolNode(
             mol=mol,
