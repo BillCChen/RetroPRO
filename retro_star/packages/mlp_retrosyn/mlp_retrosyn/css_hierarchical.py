@@ -256,3 +256,182 @@ def fullcov_fragments(smiles, cell_r=3, num=8, seed=None, topk=1):
     if not out:
         out = [Chem.MolToSmiles(mol)]
     return out[:num]
+
+
+def _internal_bonds(mol, atoms):
+    """Indices of bonds with both endpoints inside the atom set."""
+    out = set()
+    for b in mol.GetBonds():
+        if b.GetBeginAtomIdx() in atoms and b.GetEndAtomIdx() in atoms:
+            out.add(b.GetIdx())
+    return out
+
+
+def bondcov_large_fragments(smiles, cell_r=3, num=4, seed=None):
+    """Like paircov, but the greedy gain counts new internal bonds.
+
+    The candidate pool is identical to paircov (adjacent radius-`cell_r`
+    cell pairs, deduplicated by rendered fragment, filtered for RDKit
+    re-parseability). The greedy objective is the number of newly
+    covered bonds (both endpoints inside the fragment) rather than
+    newly covered atoms: reaction centers are bonds, so this aligns the
+    selection pressure with the probability that some emitted fragment
+    contains the true first disconnection. Returns unique canonical
+    fragment SMILES (length <= num); falls back to the whole molecule
+    when the pool is empty.
+    """
+    if cell_r < 0:
+        raise ValueError("cell_r must be non-negative")
+    rng = random.Random(seed) if seed is not None else random
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError("cannot parse SMILES: %s" % smiles)
+    if mol.GetNumBonds() == 0:
+        return [Chem.MolToSmiles(mol)]
+
+    rings, cells = _build_cells(mol, list(mol.GetBonds()), cell_r)
+    adj = _cell_adjacency(mol, cells)
+
+    pool, seen = [], set()  # (atoms, bond_set, frag)
+    for i in range(len(cells)):
+        for j in adj[i]:
+            if i < j:
+                atoms = cells[i] | cells[j]
+                atoms |= _complete_aromatic(rings, atoms)
+                frag = _render(mol, atoms)
+                if frag in seen:
+                    continue
+                seen.add(frag)
+                if Chem.MolFromSmiles(frag) is not None:
+                    pool.append((atoms, _internal_bonds(mol, atoms), frag))
+    if not pool:
+        return [Chem.MolToSmiles(mol)]
+
+    covered_bonds = set()
+    frags = []
+    for _ in range(num):
+        best_gain, best = 0, []
+        for atoms, bset, frag in pool:
+            gain = len(bset - covered_bonds)
+            if gain > best_gain:
+                best_gain, best = gain, [(atoms, bset, frag)]
+            elif gain == best_gain:
+                best.append((atoms, bset, frag))
+        if best_gain == 0:
+            break
+        atoms, bset, frag = rng.choice(best)
+        covered_bonds |= bset
+        frags.append(frag)
+
+    if len(frags) < num:
+        for atoms, bset, frag in rng.choices(pool, k=num - len(frags)):
+            frags.append(frag)
+
+    out = _dedup_keep_order(frags)
+    if not out:
+        out = [Chem.MolToSmiles(mol)]
+    return out[:num]
+
+
+def _connected_triples(cells, adj):
+    """All connected 3-cell index sets, as sorted unique tuples."""
+    triples = set()
+    for i in range(len(cells)):
+        for j in adj[i]:
+            if i < j:
+                for k in adj[i] | adj[j]:
+                    if k != i and k != j:
+                        triples.add(tuple(sorted((i, j, k))))
+    return triples
+
+
+def triplecov_large_fragments(smiles, cell_r=3, num=4, seed=None):
+    """Large fragments as coverage-greedy unions of three cells.
+
+    Same greedy maximum-marginal atom coverage as paircov, but the
+    candidate pool is every connected triple of radius-`cell_r` cells
+    (roughly 1.5x the atom span of a pair), aimed at targets too large
+    for two-cell unions to reach a useful size. Triple pools are an
+    order of magnitude larger than pair pools, so fragments are only
+    rendered when selected: an unparseable pick is banned and the next
+    best candidate is tried, which keeps per-call rendering near `num`.
+    Falls back to pair unions when no connected triple exists, and to
+    the whole molecule when nothing can be composed.
+    """
+    if cell_r < 0:
+        raise ValueError("cell_r must be non-negative")
+    rng = random.Random(seed) if seed is not None else random
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError("cannot parse SMILES: %s" % smiles)
+    if mol.GetNumBonds() == 0:
+        return [Chem.MolToSmiles(mol)]
+
+    rings, cells = _build_cells(mol, list(mol.GetBonds()), cell_r)
+    adj = _cell_adjacency(mol, cells)
+
+    pool, seen = [], set()  # atom sets of connected triples
+    for tri in _connected_triples(cells, adj):
+        atoms = set()
+        for c in tri:
+            atoms |= cells[c]
+        atoms |= _complete_aromatic(rings, atoms)
+        key = tuple(sorted(atoms))
+        if key not in seen:
+            seen.add(key)
+            pool.append(atoms)
+
+    if not pool:  # molecule too small for triples: use pair unions
+        for i in range(len(cells)):
+            for j in adj[i]:
+                if i < j:
+                    atoms = cells[i] | cells[j]
+                    atoms |= _complete_aromatic(rings, atoms)
+                    key = tuple(sorted(atoms))
+                    if key not in seen:
+                        seen.add(key)
+                        pool.append(atoms)
+    if not pool:
+        return [Chem.MolToSmiles(mol)]
+
+    covered = set()
+    frags = []
+    banned = set()
+    while len(frags) < num:
+        best_gain, best = 0, []
+        for idx, atoms in enumerate(pool):
+            if idx in banned:
+                continue
+            gain = len(atoms - covered)
+            if gain > best_gain:
+                best_gain, best = gain, [idx]
+            elif gain == best_gain:
+                best.append(idx)
+        if best_gain == 0 or not best:
+            break
+        progress = False
+        for idx in rng.sample(best, len(best)):  # shuffled frontier
+            frag = _render(mol, pool[idx])
+            banned.add(idx)
+            if Chem.MolFromSmiles(frag) is None:
+                continue
+            covered |= pool[idx]
+            frags.append(frag)
+            progress = True
+            break
+        if not progress:
+            continue  # frontier exhausted: recompute at the next gain tier
+
+    if len(frags) < num:  # saturated: bounded random top-up
+        attempts = 0
+        while len(frags) < num and attempts < 4 * num:
+            attempts += 1
+            atoms = pool[rng.randrange(len(pool))]
+            frag = _render(mol, atoms)
+            if Chem.MolFromSmiles(frag) is not None:
+                frags.append(frag)
+
+    out = _dedup_keep_order(frags)
+    if not out:
+        out = [Chem.MolToSmiles(mol)]
+    return out[:num]
