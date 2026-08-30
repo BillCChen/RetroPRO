@@ -163,3 +163,96 @@ def paircov_large_fragments(smiles, cell_r=3, num=4, seed=None):
     if not out:
         out = [Chem.MolToSmiles(mol)]
     return out[:num]
+
+
+def _greedy_select(candidates, covered, num, rng, topk=1):
+    """Greedy max-marginal-coverage selection.
+
+    candidates: list of (atoms, payload). Picks up to `num` entries;
+    each round ranks candidates by marginal new-atom gain and chooses
+    uniformly at random among the top-`topk` (topk=1 = argmax with
+    uniform tie-break). Stops early when no candidate adds a new atom.
+    Returns (chosen payloads, updated covered set).
+    """
+    chosen = []
+    covered = set(covered)
+    for _ in range(num):
+        ranked = []
+        for atoms, payload in candidates:
+            gain = len(atoms - covered)
+            if gain > 0:
+                ranked.append((gain, atoms, payload))
+        if not ranked:
+            break
+        ranked.sort(key=lambda x: -x[0])
+        cutoff = ranked[min(topk, len(ranked)) - 1][0]
+        frontier = [(a, p) for g, a, p in ranked if g >= cutoff]
+        atoms, payload = rng.choice(frontier)
+        covered |= atoms
+        chosen.append(payload)
+    return chosen, covered
+
+
+def fullcov_fragments(smiles, cell_r=3, num=8, seed=None, topk=1):
+    """Coverage-greedy fragments for both halves of the budget.
+
+    Small half: single radius-`cell_r` cells selected greedily by
+    marginal atom coverage (instead of the random seed bonds used by
+    production and paircov). Large half: adjacent-cell pairs whose
+    greedy selection continues from the small half's covered set, so
+    large fragments are steered away from regions the small fragments
+    already cover. Both pools are deduplicated by rendered fragment and
+    filtered for RDKit re-parseability up front. `topk` trades coverage
+    for diversity: picks are uniform among the top-`topk` candidates by
+    marginal gain. Returns unique canonical fragment SMILES
+    (length <= num); falls back to the whole molecule when nothing can
+    be composed.
+    """
+    if cell_r < 0:
+        raise ValueError("cell_r must be non-negative")
+    rng = random.Random(seed) if seed is not None else random
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError("cannot parse SMILES: %s" % smiles)
+    if mol.GetNumBonds() == 0:
+        return [Chem.MolToSmiles(mol)]
+
+    rings, cells = _build_cells(mol, list(mol.GetBonds()), cell_r)
+
+    def make_pool(atom_sets):
+        pool, seen = [], set()
+        for atoms in atom_sets:
+            frag = _render(mol, atoms)
+            if frag in seen:
+                continue
+            seen.add(frag)
+            if Chem.MolFromSmiles(frag) is not None:
+                pool.append((atoms, frag))
+        return pool
+
+    cell_pool = make_pool(cells)
+    n_small = num // 2
+    small_chosen, covered = _greedy_select(cell_pool, set(), n_small, rng, topk)
+
+    adj = _cell_adjacency(mol, cells)
+    pair_sets = []
+    for i in range(len(cells)):
+        for j in adj[i]:
+            if i < j:
+                atoms = cells[i] | cells[j]
+                pair_sets.append(atoms | _complete_aromatic(rings, atoms))
+    pair_pool = make_pool(pair_sets)
+    large_chosen, covered = _greedy_select(
+        pair_pool, covered, num - n_small, rng, topk)
+
+    frags = small_chosen + large_chosen
+    if len(frags) < num:  # saturated: top up uniformly from both pools
+        rest = cell_pool + pair_pool
+        if rest:
+            for atoms, frag in rng.choices(rest, k=num - len(frags)):
+                frags.append(frag)
+
+    out = _dedup_keep_order(frags)
+    if not out:
+        out = [Chem.MolToSmiles(mol)]
+    return out[:num]

@@ -28,7 +28,7 @@ import time
 day_hour_min_sec = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
 import pickle
 from .tp_free_tools import random_substructure, rand_aug_smiles, repeat_retro_k
-from .css_hierarchical import paircov_large_fragments
+from .css_hierarchical import paircov_large_fragments, fullcov_fragments
 from .tp_free_tools import Load_Retro_Model, Load_Forward_Model
 from rdchiral import template_extractor as extractor
 
@@ -139,6 +139,13 @@ class TP_free_Model(object):
                     sub_smiles = random_substructure(x, r=R, d=D, num=n_small)
                     sub_smiles = sub_smiles + paircov_large_fragments(
                         x, cell_r=R, num=each_num - n_small)
+                elif sampler == "fullcov":
+                    # fullcov: greedy max-coverage selection already at
+                    # the seed-cell stage; large pairs continue from the
+                    # small half's covered set. Use RD_list=[(3,0)].
+                    sub_smiles = fullcov_fragments(
+                        x, cell_r=R, num=each_num,
+                        topk=int(os.getenv("TP_FREE_FULLCOV_TOPK", "1")))
                 else:
                     raise ValueError(f"unknown TP_FREE_CSS_SAMPLER: {sampler}")
             else:
