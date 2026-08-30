@@ -2,7 +2,7 @@ import os
 import numpy as np
 import logging
 import sys
-sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from alg.mol_tree import MolTree
 import time 
 import rdkit

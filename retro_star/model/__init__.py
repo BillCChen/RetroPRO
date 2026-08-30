@@ -1,3 +1,4 @@
+import os
 import sys
-sys.path.append("/home/chenqixuan/retro_star/retro_star/model")
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from model.value_mlp import ValueMLP

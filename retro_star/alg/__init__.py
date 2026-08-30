@@ -3,8 +3,9 @@ try:
     from .molstar import molstar
 except Exception:
     try:
+        import os
         import sys
-        sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from alg.molstar import molstar
     except Exception:
         molstar = None

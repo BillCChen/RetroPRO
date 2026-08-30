@@ -2,11 +2,12 @@ import pickle
 import pandas as pd
 import logging
 import inspect
+import os
 import sys
-sys.path.append("/home/chenqixuan/retro_star/retro_star/packages/mlp_retrosyn")
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packages", "mlp_retrosyn"))
 from mlp_retrosyn.mlp_inference import MLPModel
 
-sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "alg"))
 from alg import molstar
 
 def prepare_starting_molecules(filename):

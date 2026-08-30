@@ -1,7 +1,8 @@
 import logging
 
+import os
 import sys
-sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _safe_batch_expand(expand_batch_fn, smiles_batch, task_ids):

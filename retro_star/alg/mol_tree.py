@@ -5,7 +5,7 @@ import logging
 import networkx as nx
 from graphviz import Digraph
 import sys
-sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from alg.mol_node import MolNode
 from alg.reaction_node import ReactionNode
 from alg.syn_route import SynRoute
