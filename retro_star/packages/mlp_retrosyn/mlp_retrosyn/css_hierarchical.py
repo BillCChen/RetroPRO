@@ -1,22 +1,21 @@
-"""Hierarchical (cell-graph) substructure samplers for CSS.
+"""Coverage-greedy hierarchical substructure sampler for CSS (paircov).
 
-Instead of drawing large fragments as isotropic radius-R balls around a
-single seed bond, these samplers grow small radius-`cell_r` "cells" first
-and compose large fragments as connected unions of adjacent cells:
-
-  - "pair":      uniformly sampled adjacent cell pairs (2-cell unions)
-  - "walk":      random walk over the cell adjacency graph, merging cells
-                 until a size budget is reached
-  - "partition": deterministic transitive merge of all touching cells
-                 (connected components of the cell graph)
+The production CSS channel draws large fragments as isotropic radius-R
+balls around a random seed bond; on small intermediates those balls
+degenerate into near-whole-molecule duplicates. paircov replaces the
+large half of the sampling budget with connected unions of two adjacent
+radius-`cell_r` "cells", selected by a greedy maximum-marginal-coverage
+rule so the emitted large fragments cover as many distinct atoms as
+possible instead of piling onto the same region.
 
 Cell adjacency (atom-set intersection or direct bonding) guarantees that
-every emitted fragment is connected. Aromatic-ring completion follows the
-same convention as `random_substructure`: any all-aromatic ring touched by
+every union is connected. Aromatic-ring completion follows the same
+convention as `random_substructure`: any all-aromatic ring touched by
 the distance-driven atom set is included whole, non-recursively.
 
-The production entry point is `hierarchical_substructure`, mirroring the
-signature style of `random_substructure` in tp_free_tools.py.
+Only the large half lives here. The small half stays wired through the
+original `random_substructure`, so the ablation against production
+isolates a single variable: what replaces the large-radius channel.
 """
 import random
 from collections import deque
@@ -97,102 +96,68 @@ def _dedup_keep_order(items):
     return out
 
 
-def _sample_seed_bonds(rng, bonds, num):
-    if num > len(bonds):
-        return bonds + rng.choices(bonds, k=num - len(bonds))
-    return rng.sample(bonds, num)
+def paircov_large_fragments(smiles, cell_r=3, num=4, seed=None):
+    """Sample up to `num` large fragments as coverage-greedy cell unions.
 
-
-def _pair_fragments(rng, mol, cells, adj, rings, num):
-    pairs = [(i, j) for i in range(len(cells)) for j in adj[i] if i < j]
-    frags = []
-    if pairs:
-        for i, j in (rng.sample(pairs, min(num, len(pairs)))):
-            atoms = cells[i] | cells[j]
-            atoms |= _complete_aromatic(rings, atoms)
-            frags.append(_render(mol, atoms))
-    return frags
-
-
-def _walk_fragments(rng, mol, cells, adj, rings, num, size_frac):
-    n_atoms = mol.GetNumAtoms()
-    budget = max(1, int(round(size_frac * n_atoms)))
-    frags = []
-    for start in range(len(cells)):
-        current = set(cells[start])
-        visited = {start}
-        frontier = [c for c in adj[start] if c not in visited]
-        while len(current) < budget and frontier:
-            nxt = rng.choice(frontier)
-            visited.add(nxt)
-            current |= cells[nxt]
-            frontier = [c for c in adj[nxt] if c not in visited] + [c for c in frontier if c != nxt and c not in visited]
-        current |= _complete_aromatic(rings, current)
-        frags.append(_render(mol, current))
-    return frags
-
-
-def _partition_fragments(rng, mol, cells, adj, rings, num):
-    seen = [False] * len(cells)
-    components = []
-    for i in range(len(cells)):
-        if seen[i]:
-            continue
-        comp, stack, seen[i] = set(), [i], True
-        while stack:
-            u = stack.pop()
-            comp |= cells[u]
-            for v in adj[u]:
-                if not seen[v]:
-                    seen[v] = True
-                    stack.append(v)
-        components.append(comp)
-    components.sort(key=len, reverse=True)
-    frags = []
-    for atoms in components:
-        atoms = set(atoms) | _complete_aromatic(rings, set(atoms))
-        frags.append(_render(mol, atoms))
-    if len(frags) < num:  # top up with deterministic adjacent-pair unions
-        pairs = sorted(
-            ((len(cells[i] | cells[j]), i, j) for i in range(len(cells)) for j in adj[i] if i < j))
-        for _, i, j in pairs:
-            atoms = cells[i] | cells[j]
-            atoms |= _complete_aromatic(rings, atoms)
-            frags.append(_render(mol, atoms))
-            if len(frags) >= num:
-                break
-    return frags
-
-
-def hierarchical_substructure(smiles, mode="walk", cell_r=3, num=1, size_frac=0.6, seed=None):
-    """Sample up to `num` connected fragments via cell-graph composition.
-
-    mode: "pair" | "walk" | "partition". size_frac only applies to "walk"
-    (stop merging once the fragment covers this fraction of the molecule).
-    Returns a list of canonical fragment SMILES (length <= num, unique).
-    Falls back to the whole molecule when no composition is possible.
+    Cells are radius-`cell_r` balls (plus aromatic completion) around
+    every bond of the molecule; adjacent cell pairs form the candidate
+    pool. Pairs whose rendered fragment cannot be parsed back by RDKit
+    (partially cut fused rings, ~7% under the production convention)
+    are removed from the pool up front: downstream would drop them
+    silently, so filtering here recovers the sampling budget without
+    changing what reaches the model. Selection is greedy: each round
+    picks a pool entry whose atom union adds the most previously
+    uncovered atoms, breaking ties uniformly at random. Once no entry
+    adds any new atom, the remaining budget is filled by uniform random
+    draws from the pool. Returns unique canonical fragment SMILES
+    (length <= num); falls back to the whole molecule when the pool is
+    empty.
     """
     if cell_r < 0:
         raise ValueError("cell_r must be non-negative")
-    if mode not in ("pair", "walk", "partition"):
-        raise ValueError("unknown mode: %s" % mode)
     rng = random.Random(seed) if seed is not None else random
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError("cannot parse SMILES: %s" % smiles)
     if mol.GetNumBonds() == 0:
-        return [Chem.MolToSmiles(mol)] * num
+        return [Chem.MolToSmiles(mol)]
 
-    seed_bonds = _sample_seed_bonds(rng, list(mol.GetBonds()), num)
-    rings, cells = _build_cells(mol, seed_bonds, cell_r)
+    rings, cells = _build_cells(mol, list(mol.GetBonds()), cell_r)
     adj = _cell_adjacency(mol, cells)
 
-    if mode == "pair":
-        frags = _pair_fragments(rng, mol, cells, adj, rings, num)
-    elif mode == "walk":
-        frags = _walk_fragments(rng, mol, cells, adj, rings, num, size_frac)
-    else:
-        frags = _partition_fragments(rng, mol, cells, adj, rings, num)
+    pool = []  # (atoms, frag_smiles); atoms include aromatic completion
+    for i in range(len(cells)):
+        for j in adj[i]:
+            if i < j:
+                atoms = cells[i] | cells[j]
+                atoms |= _complete_aromatic(rings, atoms)
+                frag = _render(mol, atoms)
+                if Chem.MolFromSmiles(frag) is not None:
+                    pool.append((atoms, frag))
+    if not pool:
+        return [Chem.MolToSmiles(mol)]
+
+    covered = set()
+    frags = []
+    for _ in range(num):
+        best_gain = 0
+        best = []
+        for atoms, frag in pool:
+            gain = len(atoms - covered)
+            if gain > best_gain:
+                best_gain = gain
+                best = [(atoms, frag)]
+            elif gain == best_gain:
+                best.append((atoms, frag))
+        if best_gain == 0:
+            break
+        atoms, frag = rng.choice(best)
+        covered |= atoms
+        frags.append(frag)
+
+    if len(frags) < num:  # molecule fully covered: top up at random
+        for atoms, frag in rng.choices(pool, k=num - len(frags)):
+            frags.append(frag)
 
     out = _dedup_keep_order(frags)
     if not out:
