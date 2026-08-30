@@ -28,6 +28,7 @@ import time
 day_hour_min_sec = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime())
 import pickle
 from .tp_free_tools import random_substructure, rand_aug_smiles, repeat_retro_k
+from .css_hierarchical import hierarchical_substructure
 from .tp_free_tools import Load_Retro_Model, Load_Forward_Model
 from rdchiral import template_extractor as extractor
 
@@ -125,9 +126,17 @@ class TP_free_Model(object):
         output = set()
         rd_size = max(len(RD_list), 1)
         each_num = max(1, int(topk) // rd_size)
+        sampler = os.getenv("TP_FREE_CSS_SAMPLER", "random")
         for R, D in RD_list:
             if self.use_CCS:
-                sub_smiles = random_substructure(x, r=R, d=D, num=each_num)
+                if sampler == "random":
+                    sub_smiles = random_substructure(x, r=R, d=D, num=each_num)
+                else:
+                    # Hierarchical cell-graph samplers read (R, D) as
+                    # (cell radius, unused); use RD_list=[(3,0)] for them.
+                    sub_smiles = hierarchical_substructure(
+                        x, mode=sampler, cell_r=R, num=each_num,
+                        size_frac=float(os.getenv("TP_FREE_CSS_WALK_SIZE", "0.6")))
             else:
                 sub_smiles = [x for _ in range(each_num)]
             for sub_smi in sub_smiles:
