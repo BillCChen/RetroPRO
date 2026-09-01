@@ -34,6 +34,12 @@ def parse_args():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--target-limit",
+        type=int,
+        default=None,
+        help="Compare only the first N completed targets from each plan.",
+    )
     parser.add_argument("--bootstrap", type=int, default=200000)
     parser.add_argument("--seed", type=int, default=20260901)
     return parser.parse_args()
@@ -50,6 +56,33 @@ def sha256(path):
 def load_plan(path):
     with path.open("rb") as handle:
         return pickle.load(handle)
+
+
+def limit_plan(plan, target_limit):
+    if target_limit is None:
+        return plan
+    if target_limit <= 0:
+        raise ValueError("target limit must be positive")
+    target_keys = (
+        "succ",
+        "iter",
+        "routes",
+        "route_costs",
+        "route_lens",
+        "cumulated_time",
+    )
+    limited = dict(plan)
+    for key in target_keys:
+        values = plan.get(key)
+        if values is None:
+            continue
+        if len(values) < target_limit:
+            raise ValueError(
+                "%s contains only %d targets; cannot select first %d"
+                % (key, len(values), target_limit)
+            )
+        limited[key] = values[:target_limit]
+    return limited
 
 
 def wilson_interval(successes, total, z=1.959963984540054):
@@ -285,15 +318,18 @@ def main():
 
     baseline_path = args.baseline.resolve()
     candidate_path = args.candidate.resolve()
-    baseline = load_plan(baseline_path)
-    candidate = load_plan(candidate_path)
-    contract = compare_contracts(baseline, candidate)
+    baseline_full = load_plan(baseline_path)
+    candidate_full = load_plan(candidate_path)
+    contract = compare_contracts(baseline_full, candidate_full)
+    baseline = limit_plan(baseline_full, args.target_limit)
+    candidate = limit_plan(candidate_full, args.target_limit)
     report = {
         "schema_version": "1.0.0",
         "as_of": datetime.now().astimezone().isoformat(timespec="seconds"),
         "protocol": {
             "bootstrap_samples": args.bootstrap,
             "bootstrap_seed": args.seed,
+            "target_limit": args.target_limit,
             "interpretation_boundary": (
                 "Matched-budget Pistachio-hard comparison; only sampler and "
                 "its declared TP_FREE configuration may differ."
