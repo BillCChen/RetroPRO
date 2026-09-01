@@ -35,6 +35,7 @@ from .css_effective_yield import (
     select_effective_yield_fragments,
     strict_backfill_fragments,
 )
+from .css_anchor import select_anchor_fragments
 from .tp_free_tools import Load_Retro_Model, Load_Forward_Model
 from rdchiral import template_extractor as extractor
 
@@ -217,6 +218,36 @@ class TP_free_Model(object):
         metadata["production_guardrail_budget"] = base_budget
         return randomized, metadata
 
+    def _anchor8_sampling(self, x, topk):
+        dict_ref = getattr(self, "_dict_ref", {})
+
+        def known_reactions(fragment):
+            canonical = self.smi2cano_smiels(fragment)
+            rules = list(dict_ref.get(canonical, []))
+            if not rules:
+                return set()
+            result = self._rules_to_result(x, rules)
+            return set(result["reactants"]) if result is not None else set()
+
+        fragments, metadata = select_anchor_fragments(
+            x,
+            topk=topk,
+            known_reactions=known_reactions,
+            max_replace=int(os.getenv("TP_FREE_ANCHOR_MAX_REPLACE", "2")),
+            margin=int(os.getenv("TP_FREE_ANCHOR_MARGIN", "1")),
+            cell_r=int(os.getenv("TP_FREE_ANCHOR_CELL_R", "3")),
+            guardrail_r=int(os.getenv("TP_FREE_ANCHOR_GUARDRAIL_R", "7")),
+            include_triples=os.getenv("TP_FREE_ANCHOR_INCLUDE_TRIPLES", "0") == "1",
+            max_triples=int(os.getenv("TP_FREE_ANCHOR_MAX_TRIPLES", "0")),
+            seed=int(os.getenv("TP_FREE_ANCHOR_SEED", "0")),
+        )
+        randomized = []
+        for fragment in fragments:
+            mol = Chem.MolFromSmiles(fragment)
+            if mol is not None:
+                randomized.append(Chem.MolToSmiles(mol, doRandom=True))
+        return randomized, metadata
+
     def random_sampling(self, x, RD_list, topk):
         output = set()
         rd_size = max(len(RD_list), 1)
@@ -227,6 +258,9 @@ class TP_free_Model(object):
             return output
         if sampler == "yield8_hybrid":
             output, _metadata = self._yield8_hybrid_sampling(x, topk)
+            return output
+        if sampler == "anchor8":
+            output, _metadata = self._anchor8_sampling(x, topk)
             return output
         for R, D in RD_list:
             if self.use_CCS:
@@ -371,10 +405,12 @@ class TP_free_Model(object):
         )
         return [(record["ccs"], record["reaction"]) for record in records]
 
-    def _extract_templates_from_mapped(self, ccs_smiles, mapped_reactions):
-        """Extract templates from pre-mapped reactions (no mapper call here)."""
+    def _extract_templates_from_mapped_indexed(self, ccs_smiles, mapped_reactions):
+        """Indexed variant of template extraction: (position, cano_smi, rule)."""
         templates = []
-        for cano_smi, mapped_rxn in zip(ccs_smiles, mapped_reactions):
+        for index, (cano_smi, mapped_rxn) in enumerate(
+            zip(ccs_smiles, mapped_reactions)
+        ):
             if mapped_rxn is None:
                 continue
             mapped_rxn_dict = {
@@ -385,8 +421,17 @@ class TP_free_Model(object):
             template = extractor.extract_from_reaction(mapped_rxn_dict)
             if 'reaction_smarts' not in template:
                 continue
-            templates.append((cano_smi, template['reaction_smarts']))
+            templates.append((index, cano_smi, template['reaction_smarts']))
         return templates
+
+    def _extract_templates_from_mapped(self, ccs_smiles, mapped_reactions):
+        """Extract templates from pre-mapped reactions (no mapper call here)."""
+        return [
+            (cano_smi, rule)
+            for _index, cano_smi, rule in self._extract_templates_from_mapped_indexed(
+                ccs_smiles, mapped_reactions
+            )
+        ]
 
     def _pair_key_str(self, cano_smi, rule):
         return "%s%s%s" % (cano_smi, self._pair_key_sep, rule)
@@ -505,6 +550,8 @@ class TP_free_Model(object):
             sampled, selection_metadata = self._yield8_sampling(target, topk)
         elif sampler == "yield8_hybrid":
             sampled, selection_metadata = self._yield8_hybrid_sampling(target, topk)
+        elif sampler == "anchor8":
+            sampled, selection_metadata = self._anchor8_sampling(target, topk)
         else:
             sampled = self.random_sampling(target, self.RD_list, topk)
             selection_metadata = None
@@ -805,12 +852,36 @@ class TP_free_Model(object):
                 for record in records:
                     handle.write(json.dumps(record, sort_keys=True) + "\n")
 
+    def _write_retro_candidate_telemetry(self, records, topk):
+        path = os.getenv("TP_FREE_RETRO_CANDIDATE_LOG", "")
+        if not path:
+            return
+        path = path.format(pid=os.getpid())
+        parent = os.path.dirname(os.path.abspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with self._stats_lock:
+            with open(path, "a", encoding="utf-8") as handle:
+                for record in records:
+                    row = dict(record)
+                    row["timestamp_epoch"] = time.time()
+                    row["requested_topk"] = int(topk)
+                    handle.write(json.dumps(row, sort_keys=True) + "\n")
+
     def run_batch(self, x_list, topk=20, task_ids=None):
         if x_list is None or len(x_list) == 0:
             return []
 
         if task_ids is not None and len(task_ids) != len(x_list):
             raise ValueError("task_ids must be the same length as x_list")
+
+        candidate_log_path = os.getenv("TP_FREE_RETRO_CANDIDATE_LOG", "")
+        candidate_records = [] if candidate_log_path else None
+        candidate_log_sampler = (
+            os.getenv("TP_FREE_CSS_SAMPLER", "random")
+            if candidate_records is not None
+            else None
+        )
 
         # --- Preparation (CPU-bound RDKit) -- parallelized across molecules ---
         max_workers = min(len(x_list), 8)
@@ -868,17 +939,36 @@ class TP_free_Model(object):
             valid_smiles = []
             valid_retro = []
             valid_fragments = []
+            valid_refs = []
             for owner_idx, ccs_smi, retro_smi, fragment_key in zip(
                 expanded_owner, expanded_aug, retro, expanded_fragments
             ):
                 prepared[owner_idx]["fragment_stats"][fragment_key][
                     "retro_raw_count"
                 ] += 1
-                if self._is_valid_retro(retro_smi):
+                is_valid_retro = self._is_valid_retro(retro_smi)
+                record = None
+                if candidate_records is not None:
+                    record = {
+                        "schema_version": "1.0.0",
+                        "grain": "retro_candidate",
+                        "task_id": prepared[owner_idx].get("task_id"),
+                        "expanded_mol": prepared[owner_idx]["target"],
+                        "sampler": candidate_log_sampler,
+                        "fragment": fragment_key,
+                        "aug_smiles": ccs_smi,
+                        "retro_raw": retro_smi,
+                        "retro_valid": bool(is_valid_retro),
+                        "forward_output": None,
+                        "forward_consistent": None,
+                    }
+                    candidate_records.append(record)
+                if is_valid_retro:
                     valid_owner.append(owner_idx)
                     valid_smiles.append(ccs_smi)
                     valid_retro.append(retro_smi)
                     valid_fragments.append(fragment_key)
+                    valid_refs.append(record)
                     prepared[owner_idx]["fragment_stats"][fragment_key][
                         "retro_valid_count"
                     ] += 1
@@ -894,13 +984,24 @@ class TP_free_Model(object):
                 forward_raw = []
             valid_forward = self._align_forward_outputs(forward_raw, len(valid_retro))
 
-            for owner_idx, ccs_smi, retro_smi, forward_smi, fragment_key in zip(
+            for owner_idx, ccs_smi, retro_smi, forward_smi, fragment_key, record in zip(
                 valid_owner,
                 valid_smiles,
                 valid_retro,
                 valid_forward,
                 valid_fragments,
+                valid_refs,
             ):
+                if record is not None:
+                    forward_mol = (
+                        self.check_smiles_valid(forward_smi) if forward_smi else None
+                    )
+                    record["forward_output"] = forward_smi
+                    record["forward_consistent"] = bool(
+                        forward_mol is not None
+                        and self.mol2cano_smiles(Chem.MolFromSmiles(ccs_smi))
+                        == self.mol2cano_smiles(forward_mol)
+                    )
                 owner_buckets[owner_idx]['smiles'].append(ccs_smi)
                 owner_buckets[owner_idx]['retro'].append(retro_smi)
                 owner_buckets[owner_idx]['forward'].append(forward_smi)
@@ -975,7 +1076,17 @@ class TP_free_Model(object):
                 if mapped_reaction is not None:
                     item["fragment_stats"][fragment_key]["mapped_count"] += 1
 
-            templates = self._extract_templates_from_mapped(ccs_slice, mapped_slice)
+            if candidate_records is not None:
+                templates_indexed = self._extract_templates_from_mapped_indexed(
+                    ccs_slice, mapped_slice
+                )
+                templates = [
+                    (cano_smi, rule)
+                    for _index, cano_smi, rule in templates_indexed
+                ]
+            else:
+                templates_indexed = None
+                templates = self._extract_templates_from_mapped(ccs_slice, mapped_slice)
             for fragment_key, _rule in templates:
                 item["fragment_stats"][fragment_key][
                     "template_extracted_count"
@@ -998,8 +1109,45 @@ class TP_free_Model(object):
                         item["fragment_stats"][fragment_key][
                             "full_product_reactions"
                         ].add(reaction)
+            if candidate_records is not None:
+                reactions_slice = per_mol_reactions[owner_idx]
+                template_index_set = {
+                    index for index, _cano, _rule in (templates_indexed or [])
+                }
+                result_keys = set()
+                if result is not None:
+                    result_keys = {
+                        self.smi2cano_smiels(reactant)
+                        for reactant in result["reactants"]
+                    }
+                for pos, reaction_record in enumerate(reactions_slice):
+                    mapped_flag = (
+                        pos < len(mapped_slice) and mapped_slice[pos] is not None
+                    )
+                    reactant_part = (
+                        reaction_record["reaction"].split(">>", 1)[1]
+                        if ">>" in reaction_record["reaction"]
+                        else ""
+                    )
+                    candidate_records.append({
+                        "schema_version": "1.0.0",
+                        "grain": "reaction",
+                        "task_id": item.get("task_id"),
+                        "expanded_mol": target,
+                        "sampler": candidate_log_sampler,
+                        "fragment": reaction_record["fragment"],
+                        "reaction": reaction_record["reaction"],
+                        "mapped": bool(mapped_flag),
+                        "template_extracted": pos in template_index_set,
+                        "in_full_product_output": bool(
+                            reactant_part and reactant_part in result_keys
+                        ),
+                    })
             outputs.append(result)
             self._write_fragment_yield_telemetry(item, topk)
+
+        if candidate_records:
+            self._write_retro_candidate_telemetry(candidate_records, topk)
 
         return outputs
 

@@ -37,7 +37,7 @@ RDLogger.DisableLog("rdApp.*")
 
 MODES = (
     "random", "paircov", "fullcov", "bondcov", "triplecov", "yield8",
-    "yield8_hybrid",
+    "yield8_hybrid", "anchor8",
 )
 RD_SINGLE = [(3, 0)]
 TOPK = 8
@@ -350,6 +350,155 @@ def check_effective_cache_contract(model):
     print("  effective-cache applicability contract OK")
 
 
+def check_anchor8_contract(model, smi):
+    from mlp_retrosyn.css_anchor import select_anchor_fragments, _canonical
+    from mlp_retrosyn.css_effective_yield import (
+        enumerate_effective_yield_candidates,
+    )
+
+    os.environ["TP_FREE_CSS_STRICT_TOPK"] = "1"
+    model._dict_ref = {}
+    random.seed(29)
+    os.environ["TP_FREE_CSS_SAMPLER"] = "random"
+    baseline = model.random_sampling(smi, [(7, 0), (3, 0)], TOPK)
+    baseline_canonical = {_canonical(fragment) for fragment in baseline}
+    random.seed(29)
+    os.environ["TP_FREE_CSS_SAMPLER"] = "anchor8"
+    anchored = model.random_sampling(smi, [(7, 0), (3, 0)], TOPK)
+    anchored_canonical = {_canonical(fragment) for fragment in anchored}
+    assert baseline_canonical == anchored_canonical, (
+        baseline_canonical,
+        anchored_canonical,
+    )
+    os.environ.pop("TP_FREE_CSS_STRICT_TOPK", None)
+
+    chain = "CCCCCCCCCCCCCCCC"
+    whole = _canonical(chain)
+    random.seed(7)
+    _probe, probe_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: set())
+    kept = {
+        row["smiles"]
+        for row in probe_meta["selected"]
+        if row["families"] == ["anchor_base"]
+    }
+    all_candidates = {
+        record["smiles"]
+        for record in enumerate_effective_yield_candidates(chain)
+    }
+    outside = sorted(all_candidates - kept - {whole})
+    assert outside, (kept, all_candidates)
+    known = {fragment: {"reaction-%s" % fragment} for fragment in outside[:3]}
+
+    random.seed(7)
+    output, metadata = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()))
+    assert metadata["lost_slot_count"] > 0
+    assert 1 <= metadata["replaced_count"] <= 2
+    reclaimed = [
+        row["smiles"]
+        for row in metadata["selected"]
+        if "anchor_reclaim" in row["families"]
+    ]
+    assert reclaimed and all(fragment in output for fragment in reclaimed)
+
+    random.seed(7)
+    _output_margin, margin_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()), margin=99)
+    assert margin_meta["replaced_count"] == 0
+    assert margin_meta["rejected_candidate_count"] > 0
+
+    random.seed(7)
+    _output_cap, cap_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()), max_replace=1)
+    assert cap_meta["replaced_count"] <= 1
+
+    random.seed(11)
+    first, first_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()))
+    random.seed(11)
+    second, second_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()))
+    assert first == second and first_meta == second_meta
+
+    small, small_meta = select_anchor_fragments("C", TOPK, lambda fragment: set())
+    assert small == ["C"] and small_meta["capacity_limited"] is True
+    print("  anchor8 baseline-anchor and micro-replacement contract OK")
+
+
+def check_anchor8_candidate_telemetry(model):
+    class EchoModel(object):
+        def inference(self, rows):
+            return list(rows)
+
+    class FakeMapper(object):
+        def map_reactions(self, reactions):
+            return ["CCO>>CC.O" for _reaction in reactions]
+
+    model.RD_list = RD_SINGLE
+    model.use_DICT = False
+    model.retro_topk = 1
+    model.forward_topk = 1
+    model.retro_model = EchoModel()
+    model.forward_model = EchoModel()
+    model.mapper = FakeMapper()
+    model._stats_lock = threading.Lock()
+    model._dict_ref = defaultdict(list)
+    model._per_target_stats = defaultdict(
+        lambda: {
+            "substructure_lookups": 0,
+            "substructure_hits": 0,
+            "new_keys": 0,
+            "new_template_values": 0,
+        }
+    )
+    model._global_total_substructure_lookups = 0
+    model._global_total_substructure_hits = 0
+    model._global_substructure_hit_counts = defaultdict(int)
+    model._global_template_hit_counts = defaultdict(int)
+    model._anchor8_sampling = types.MethodType(
+        lambda _self, _target, _topk: (
+            ["CCO", "CC"], {"selected": [], "capacity_limited": False}
+        ),
+        model,
+    )
+    rule = "[C:1]-[O:2]>>[C:1].[C:2]"
+    model._extract_templates_from_mapped_indexed = types.MethodType(
+        lambda _self, fragments, _mapped: [
+            (index, fragment, rule) for index, fragment in enumerate(fragments)
+        ],
+        model,
+    )
+
+    previous_sampler = os.environ.get("TP_FREE_CSS_SAMPLER")
+    os.environ["TP_FREE_CSS_SAMPLER"] = "anchor8"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "candidates-{pid}.jsonl")
+        os.environ["TP_FREE_RETRO_CANDIDATE_LOG"] = path
+        output = model.run_batch(["CCO"], topk=2, task_ids=[7])[0]
+        assert output is not None
+        rendered = path.format(pid=os.getpid())
+        with open(rendered) as handle:
+            rows = [json.loads(line) for line in handle]
+        retro_rows = [row for row in rows if row["grain"] == "retro_candidate"]
+        reaction_rows = [row for row in rows if row["grain"] == "reaction"]
+        assert len(retro_rows) >= 2, rows
+        assert all(row["retro_valid"] for row in retro_rows)
+        assert all(row["forward_consistent"] for row in retro_rows)
+        assert all(row["sampler"] == "anchor8" for row in retro_rows)
+        assert {row["fragment"] for row in retro_rows} == {"CCO", "CC"}
+        assert len(reaction_rows) >= 2, reaction_rows
+        assert all(row["mapped"] for row in reaction_rows)
+        assert all(row["template_extracted"] for row in reaction_rows)
+        assert all(row["in_full_product_output"] is False for row in reaction_rows)
+    os.environ.pop("TP_FREE_RETRO_CANDIDATE_LOG", None)
+    if previous_sampler is None:
+        os.environ.pop("TP_FREE_CSS_SAMPLER", None)
+    else:
+        os.environ["TP_FREE_CSS_SAMPLER"] = previous_sampler
+    print("  anchor8 per-candidate telemetry contract OK")
+
+
 def collect_targets(argv):
     targets = []
     if len(argv) > 1 and Path(argv[1]).exists():
@@ -373,6 +522,8 @@ def main(argv):
     check_yield8_contract(model, targets[-1])
     check_strict_baseline_contract(model, targets[-1])
     check_yield8_hybrid_contract(model, targets[-1])
+    check_anchor8_contract(model, targets[-1])
+    check_anchor8_candidate_telemetry(model)
     check_yield_attribution(model)
     check_run_batch_attribution(model)
     check_effective_cache_contract(model)
