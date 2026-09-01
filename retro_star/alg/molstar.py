@@ -72,6 +72,9 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
                     templates = result['templates']
                 else:
                     templates = result['template']
+                fragment_sources = result.get(
+                    'fragment_sources', [[] for _ in range(len(scores))]
+                )
                 cost = list(costs)
                 costs_list = []
                 reactant_lists = []
@@ -105,6 +108,7 @@ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
                             'score': float(scores[j]),
                             'cost': float(cost[j]),
                             'template': templates[j],
+                            'source_fragments': list(fragment_sources[j]),
                             'valid': bool(valid),
                             'invalid_reactants': invalid_reactants,
                             'has_ancestor_reactant': bool(has_ancestor_reactant),

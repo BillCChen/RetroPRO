@@ -3,10 +3,18 @@ import pandas as pd
 import logging
 import inspect
 import sys
-sys.path.append("/home/chenqixuan/retro_star/retro_star/packages/mlp_retrosyn")
+from pathlib import Path
+
+
+RETRO_STAR_ROOT = Path(__file__).resolve().parents[1]
+MLP_PACKAGE_ROOT = RETRO_STAR_ROOT / "packages" / "mlp_retrosyn"
+for package_root in (RETRO_STAR_ROOT, MLP_PACKAGE_ROOT):
+    package_root_text = str(package_root)
+    if package_root_text not in sys.path:
+        sys.path.insert(0, package_root_text)
+
 from mlp_retrosyn.mlp_inference import MLPModel
 
-sys.path.append("/home/chenqixuan/retro_star/retro_star/alg")
 from alg import molstar
 
 def prepare_starting_molecules(filename):

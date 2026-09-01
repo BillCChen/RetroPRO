@@ -1,4 +1,5 @@
 from __future__ import print_function
+import json
 import os
 import threading
 import numpy as np
@@ -30,6 +31,10 @@ import pickle
 from .tp_free_tools import random_substructure, rand_aug_smiles, repeat_retro_k
 from .css_hierarchical import (paircov_large_fragments, fullcov_fragments,
                                    bondcov_large_fragments, triplecov_large_fragments)
+from .css_effective_yield import (
+    select_effective_yield_fragments,
+    strict_backfill_fragments,
+)
 from .tp_free_tools import Load_Retro_Model, Load_Forward_Model
 from rdchiral import template_extractor as extractor
 
@@ -123,11 +128,106 @@ class TP_free_Model(object):
         self.mapper = BatchedMapper(batch_size=self.mapper_batch_size)
         logging.info("Loaded mapper with batch_size=%d", self.mapper_batch_size)
 
+    def _yield8_sampling(self, x, topk):
+        dict_ref = getattr(self, "_dict_ref", {})
+
+        def known_reactions(fragment):
+            canonical = self.smi2cano_smiels(fragment)
+            rules = list(dict_ref.get(canonical, []))
+            if not rules:
+                return set()
+            result = self._rules_to_result(x, rules)
+            return set(result["reactants"]) if result is not None else set()
+
+        fragments, metadata = select_effective_yield_fragments(
+            x,
+            topk=topk,
+            known_reactions=known_reactions,
+            exploration_slots=int(os.getenv("TP_FREE_YIELD_EXPLORATION_SLOTS", "2")),
+            cell_r=int(os.getenv("TP_FREE_YIELD_CELL_R", "3")),
+            guardrail_r=int(os.getenv("TP_FREE_YIELD_GUARDRAIL_R", "7")),
+            include_triples=os.getenv("TP_FREE_YIELD_INCLUDE_TRIPLES", "1") == "1",
+            max_triples=int(os.getenv("TP_FREE_YIELD_MAX_TRIPLES", "256")),
+            seed=int(os.getenv("TP_FREE_YIELD_SEED", "0")),
+            exploration_profile=os.getenv(
+                "TP_FREE_YIELD_EXPLORATION_PROFILE", "balanced"
+            ),
+        )
+        randomized = []
+        for fragment in fragments:
+            mol = Chem.MolFromSmiles(fragment)
+            if mol is not None:
+                randomized.append(Chem.MolToSmiles(mol, doRandom=True))
+        return randomized, metadata
+
+    def _yield8_hybrid_sampling(self, x, topk):
+        configured_budget = int(
+            os.getenv("TP_FREE_YIELD_GUARDRAIL_SLOTS", "4")
+        )
+        if configured_budget < 0:
+            raise ValueError("TP_FREE_YIELD_GUARDRAIL_SLOTS must be non-negative")
+        base_budget = min(configured_budget, int(topk))
+        r7_budget = base_budget // 2
+        r3_budget = base_budget - r7_budget
+        base = random_substructure(x, r=7, d=0, num=r7_budget)
+        base += random_substructure(x, r=3, d=0, num=r3_budget)
+        base = strict_backfill_fragments(
+            x,
+            base,
+            base_budget,
+            ("r3", "r7"),
+            max_triples=0,
+        )
+        learned, learned_metadata = self._yield8_sampling(x, topk)
+        merged = strict_backfill_fragments(
+            x,
+            base + learned,
+            int(topk),
+            ("r3", "r7", "pair", "triple"),
+            max_triples=int(os.getenv("TP_FREE_YIELD_MAX_TRIPLES", "256")),
+        )
+        learned_rows = {
+            self.smi2cano_smiels(row["smiles"]): row
+            for row in learned_metadata.get("selected", [])
+        }
+        selected_rows = []
+        randomized = []
+        for fragment in merged:
+            canonical = self.smi2cano_smiels(fragment)
+            mol = Chem.MolFromSmiles(fragment)
+            if mol is None:
+                continue
+            randomized.append(Chem.MolToSmiles(mol, doRandom=True))
+            row = learned_rows.get(canonical)
+            if row is None:
+                row = {
+                    "smiles": canonical,
+                    "families": ["production_guardrail"],
+                    "known_reaction_count": 0,
+                    "atom_count": mol.GetNumAtoms(),
+                    "bond_count": mol.GetNumBonds(),
+                }
+            selected_rows.append(row)
+        metadata = dict(learned_metadata)
+        metadata["selected"] = selected_rows
+        metadata["selected_count"] = len(randomized)
+        metadata["requested_count"] = int(topk)
+        metadata["capacity_limited"] = len(randomized) < int(topk)
+        metadata["exploration_profile"] = "hybrid"
+        metadata["production_guardrail_budget"] = base_budget
+        return randomized, metadata
+
     def random_sampling(self, x, RD_list, topk):
         output = set()
         rd_size = max(len(RD_list), 1)
         each_num = max(1, int(topk) // rd_size)
         sampler = os.getenv("TP_FREE_CSS_SAMPLER", "random")
+        if sampler == "yield8":
+            output, _metadata = self._yield8_sampling(x, topk)
+            return output
+        if sampler == "yield8_hybrid":
+            output, _metadata = self._yield8_hybrid_sampling(x, topk)
+            return output
         for R, D in RD_list:
             if self.use_CCS:
                 if sampler == "random":
@@ -169,6 +269,30 @@ class TP_free_Model(object):
         if len(output) < 1 and self.use_CCS:
             logging.info(f"Random substructure extraction failed for {x} with RD_list {RD_list}. Using original molecule.")
             output.add(x)
+        if os.getenv("TP_FREE_CSS_STRICT_TOPK", "0") == "1" and self.use_CCS:
+            if sampler == "paircov":
+                families = ("r3", "pair")
+            elif sampler == "triplecov":
+                families = ("r3", "triple")
+            elif sampler in ("fullcov", "bondcov"):
+                families = ("r3", "pair")
+            else:
+                radii = {int(radius) for radius, _distance in RD_list}
+                families = tuple(
+                    family for radius, family in ((3, "r3"), (7, "r7"))
+                    if radius in radii
+                )
+                if not families:
+                    families = ("r3", "r7")
+            output = strict_backfill_fragments(
+                x,
+                output,
+                int(topk),
+                families,
+                cell_r=3,
+                guardrail_r=7,
+                max_triples=int(os.getenv("TP_FREE_YIELD_MAX_TRIPLES", "256")),
+            )
         return list(output)
 
     def check_smiles_valid(self, smiles):
@@ -216,19 +340,36 @@ class TP_free_Model(object):
             cano_parts = sorted(cano_parts)
             return '.'.join(cano_parts)
 
-    def filter(self, x, smiles, retro, forward):
-        cano_smi_reactions = []
-        for CCS_smi, r_smi, f_smi in zip(smiles, retro, forward):
+    def _filter_with_attribution(self, smiles, retro, forward, fragment_keys):
+        records = []
+        for CCS_smi, r_smi, f_smi, fragment_key in zip(
+            smiles, retro, forward, fragment_keys
+        ):
             f_mol = self.check_smiles_valid(f_smi)
             if f_mol is None:
                 continue
             smi_mol = Chem.MolFromSmiles(CCS_smi)
             if self.mol2cano_smiles(smi_mol) == self.mol2cano_smiles(f_mol):
-                cano_smi_reactions.append(
-                    (self.mol2cano_smiles(smi_mol), f"{CCS_smi}>>{self.smi2cano_smiels(r_smi)}")
-                )
-        logging.info(f"Filtered {len(cano_smi_reactions)} valid reactions from {len(smiles)} candidates.")
-        return cano_smi_reactions
+                canonical_fragment = self.mol2cano_smiles(smi_mol)
+                records.append({
+                    "fragment": fragment_key or canonical_fragment,
+                    "ccs": canonical_fragment,
+                    "reaction": "%s>>%s" % (
+                        CCS_smi, self.smi2cano_smiels(r_smi)
+                    ),
+                })
+        logging.info(
+            "Filtered %d valid reactions from %d candidates.",
+            len(records),
+            len(smiles),
+        )
+        return records
+
+    def filter(self, x, smiles, retro, forward):
+        records = self._filter_with_attribution(
+            smiles, retro, forward, [None] * len(smiles)
+        )
+        return [(record["ccs"], record["reaction"]) for record in records]
 
     def _extract_templates_from_mapped(self, ccs_smiles, mapped_reactions):
         """Extract templates from pre-mapped reactions (no mapper call here)."""
@@ -359,32 +500,123 @@ class TP_free_Model(object):
 
     def _prepare_single_target(self, x, topk, task_id=None):
         target = self._canonicalize_target(x)
-        sampled = self.random_sampling(target, self.RD_list, topk)
+        sampler = os.getenv("TP_FREE_CSS_SAMPLER", "random")
+        if sampler == "yield8":
+            sampled, selection_metadata = self._yield8_sampling(target, topk)
+        elif sampler == "yield8_hybrid":
+            sampled, selection_metadata = self._yield8_hybrid_sampling(target, topk)
+        else:
+            sampled = self.random_sampling(target, self.RD_list, topk)
+            selection_metadata = None
 
         aug_smiles = []
+        aug_fragment_keys = []
         dict_rules = []
+        dict_rule_entries = []
+        fragment_stats = OrderedDict()
+        selected_metadata = {}
+        if selection_metadata is not None:
+            for row in selection_metadata.get("selected", []):
+                selected_metadata[self.smi2cano_smiels(row["smiles"])] = row
         if self.use_DICT:
-            for smi in sampled:
+            for rank, smi in enumerate(sampled, start=1):
                 cano_smi = self.smi2cano_smiels(smi)
                 cached_rules = self._dict_ref.get(cano_smi, [])
                 self._record_cache_lookup(cano_smi, cached_rules, task_id)
-                if len(cached_rules) > 0:
-                    dict_rules.extend(cached_rules)
-                    aug_smiles.extend(rand_aug_smiles(smi, 1))
-                else:
-                    aug_smiles.extend(rand_aug_smiles(smi, 5))
+                applicable_rules = list(cached_rules)
+                if os.getenv("TP_FREE_EFFECTIVE_CACHE", "0") == "1":
+                    applicable_rules = [
+                        rule for rule in cached_rules
+                        if self._rules_to_result(target, [rule]) is not None
+                    ]
+                aug_count = 1 if len(applicable_rules) > 0 else 5
+                metadata = selected_metadata.get(cano_smi, {})
+                fragment_stats.setdefault(cano_smi, {
+                    "selected_rank": rank,
+                    "fragment": cano_smi,
+                    "families": metadata.get("families", []),
+                    "dict_rule_count": len(cached_rules),
+                    "dict_applicable_rule_count": len(applicable_rules),
+                    "augmentation_count": 0,
+                    "retro_raw_count": 0,
+                    "retro_valid_count": 0,
+                    "forward_consistent_count": 0,
+                    "mapped_count": 0,
+                    "template_extracted_count": 0,
+                    "full_product_reactions": set(),
+                })
+                if len(applicable_rules) > 0:
+                    dict_rules.extend(applicable_rules)
+                    dict_rule_entries.extend(
+                        (cano_smi, rule) for rule in applicable_rules
+                    )
+                augmentations = rand_aug_smiles(smi, aug_count)
+                if not augmentations:
+                    augmentations = [smi]
+                fragment_stats[cano_smi]["augmentation_count"] += len(
+                    augmentations
+                )
+                aug_smiles.extend(augmentations)
+                aug_fragment_keys.extend([cano_smi] * len(augmentations))
         else:
-            for smi in sampled:
-                aug_smiles.extend(rand_aug_smiles(smi, 5))
+            for rank, smi in enumerate(sampled, start=1):
+                cano_smi = self.smi2cano_smiels(smi)
+                augmentations = rand_aug_smiles(smi, 5)
+                fragment_stats.setdefault(cano_smi, {
+                    "selected_rank": rank,
+                    "fragment": cano_smi,
+                    "families": selected_metadata.get(cano_smi, {}).get("families", []),
+                    "dict_rule_count": 0,
+                    "dict_applicable_rule_count": 0,
+                    "augmentation_count": 0,
+                    "retro_raw_count": 0,
+                    "retro_valid_count": 0,
+                    "forward_consistent_count": 0,
+                    "mapped_count": 0,
+                    "template_extracted_count": 0,
+                    "full_product_reactions": set(),
+                })
+                if not augmentations:
+                    augmentations = [smi]
+                fragment_stats[cano_smi]["augmentation_count"] += len(
+                    augmentations
+                )
+                aug_smiles.extend(augmentations)
+                aug_fragment_keys.extend([cano_smi] * len(augmentations))
 
         if len(aug_smiles) == 0:
             aug_smiles = rand_aug_smiles(target, max(int(topk), 1))
+            fallback_key = self.smi2cano_smiels(target)
+            aug_fragment_keys = [fallback_key] * len(aug_smiles)
+            fragment_stats.setdefault(fallback_key, {
+                "selected_rank": 1,
+                "fragment": fallback_key,
+                "families": ["whole"],
+                "dict_rule_count": 0,
+                "dict_applicable_rule_count": 0,
+                "augmentation_count": len(aug_smiles),
+                "retro_raw_count": 0,
+                "retro_valid_count": 0,
+                "forward_consistent_count": 0,
+                "mapped_count": 0,
+                "template_extracted_count": 0,
+                "full_product_reactions": set(),
+            })
         if len(aug_smiles) == 0:
             aug_smiles = [target]
+            fallback_key = self.smi2cano_smiels(target)
+            aug_fragment_keys = [fallback_key]
+            fragment_stats[fallback_key]["augmentation_count"] = 1
         return {
             'target': target,
             'aug_smiles': aug_smiles,
+            'aug_fragment_keys': aug_fragment_keys,
             'dict_rules': dict_rules,
+            'dict_rule_entries': dict_rule_entries,
+            'sampled_fragments': sampled,
+            'selection_metadata': selection_metadata,
+            'fragment_stats': fragment_stats,
+            'task_id': task_id,
         }
 
     def _align_forward_outputs(self, forward_raw, expected_size):
@@ -408,14 +640,15 @@ class TP_free_Model(object):
             outputs.append("")
         return outputs
 
-    def _rules_to_result(self, x, rule_list):
-        reactants = []
-        scores = []
-        templates = []
-        for rule in rule_list:
+    def _rules_to_result_with_sources(self, x, rule_entries):
+        target_mol = Chem.MolFromSmiles(x)
+        if target_mol is None:
+            return None
+        merged = OrderedDict()
+        for source_fragment, rule in rule_entries:
             out1 = []
             try:
-                all_out = AllChem.ReactionFromSmarts(rule).RunReactants((Chem.MolFromSmiles(x),))
+                all_out = AllChem.ReactionFromSmarts(rule).RunReactants((target_mol,))
                 if len(all_out) == 0:
                     continue
                 out1 = [Chem.MolToSmiles(mol) for mol in all_out[0]]
@@ -427,24 +660,29 @@ class TP_free_Model(object):
                     continue
                 out1 = ['.'.join(sorted(out1))]
                 for reactant in out1:
-                    reactants.append(reactant)
-                    scores.append(1.0)
-                    templates.append(rule)
+                    if '.' in reactant:
+                        reactant = '.'.join(sorted(reactant.strip().split('.')))
+                    row = merged.setdefault(reactant, {
+                        "score": 0.0,
+                        "template": rule,
+                        "sources": set(),
+                    })
+                    row["score"] += 1.0
+                    if source_fragment is not None:
+                        row["sources"].add(source_fragment)
             except ValueError:
                 pass
 
-        if len(reactants) == 0:
+        if not merged:
             return None
 
-        reactants_d = defaultdict(list)
-        for r, s, t in zip(reactants, scores, templates):
-            if '.' in r:
-                str_list = sorted(r.strip().split('.'))
-                reactants_d['.'.join(str_list)].append((s, t))
-            else:
-                reactants_d[r].append((s, t))
-
-        reactants, scores, templates = merge(reactants_d)
+        ranked = sorted(
+            merged.items(), key=lambda item: item[1]["score"], reverse=True
+        )
+        reactants = [item[0] for item in ranked]
+        scores = [item[1]["score"] for item in ranked]
+        templates = [item[1]["template"] for item in ranked]
+        fragment_sources = [sorted(item[1]["sources"]) for item in ranked]
         total = sum(scores)
         if total <= 0:
             return None
@@ -453,7 +691,16 @@ class TP_free_Model(object):
             'reactants': reactants,
             'scores': scores,
             'template': templates,
+            'fragment_sources': fragment_sources,
         }
+
+    def _rules_to_result(self, x, rule_list):
+        result = self._rules_to_result_with_sources(
+            x, [(None, rule) for rule in rule_list]
+        )
+        if result is not None:
+            result.pop("fragment_sources", None)
+        return result
 
     def _dict_num_keys(self):
         return len(self._dict_ref)
@@ -512,6 +759,52 @@ class TP_free_Model(object):
             },
         }
 
+    def _write_fragment_yield_telemetry(self, item, topk):
+        path = os.getenv("TP_FREE_FRAGMENT_YIELD_LOG", "")
+        if not path:
+            return
+        path = path.format(pid=os.getpid())
+        parent = os.path.dirname(os.path.abspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        sampler = os.getenv("TP_FREE_CSS_SAMPLER", "random")
+        records = []
+        for stats in item["fragment_stats"].values():
+            record = {
+                "schema_version": "1.0.0",
+                "timestamp_epoch": time.time(),
+                "task_id": item.get("task_id"),
+                "target": item["target"],
+                "sampler": sampler,
+                "requested_topk": int(topk),
+                "selected_fragment_count": len(item["fragment_stats"]),
+                "capacity_limited": bool(
+                    item.get("selection_metadata", {}).get("capacity_limited", False)
+                    if item.get("selection_metadata") is not None else False
+                ),
+                "selected_rank": stats["selected_rank"],
+                "fragment": stats["fragment"],
+                "families": list(stats["families"]),
+                "dict_rule_count": stats["dict_rule_count"],
+                "dict_applicable_rule_count": stats[
+                    "dict_applicable_rule_count"
+                ],
+                "augmentation_count": stats["augmentation_count"],
+                "retro_raw_count": stats["retro_raw_count"],
+                "retro_valid_count": stats["retro_valid_count"],
+                "forward_consistent_count": stats["forward_consistent_count"],
+                "mapped_count": stats["mapped_count"],
+                "template_extracted_count": stats["template_extracted_count"],
+                "full_product_unique_reaction_count": len(
+                    stats["full_product_reactions"]
+                ),
+            }
+            records.append(record)
+        with self._stats_lock:
+            with open(path, "a", encoding="utf-8") as handle:
+                for record in records:
+                    handle.write(json.dumps(record, sort_keys=True) + "\n")
+
     def run_batch(self, x_list, topk=20, task_ids=None):
         if x_list is None or len(x_list) == 0:
             return []
@@ -535,12 +828,18 @@ class TP_free_Model(object):
         # --- Retro inference (single batched GPU call) ---
         flat_aug_smiles = []
         flat_owner = []
+        flat_fragment_keys = []
         for owner_idx, item in enumerate(prepared):
-            for smi in item['aug_smiles']:
+            for smi, fragment_key in zip(
+                item['aug_smiles'], item['aug_fragment_keys']
+            ):
                 flat_aug_smiles.append(smi)
                 flat_owner.append(owner_idx)
+                flat_fragment_keys.append(fragment_key)
 
-        owner_buckets = defaultdict(lambda: {'smiles': [], 'retro': [], 'forward': []})
+        owner_buckets = defaultdict(
+            lambda: {'smiles': [], 'retro': [], 'forward': [], 'fragments': []}
+        )
 
         if len(flat_aug_smiles) > 0:
             try:
@@ -551,6 +850,9 @@ class TP_free_Model(object):
 
             expanded_aug = repeat_retro_k(flat_aug_smiles, self.retro_topk)
             expanded_owner = repeat_retro_k(flat_owner, self.retro_topk)
+            expanded_fragments = repeat_retro_k(
+                flat_fragment_keys, self.retro_topk
+            )
             if len(retro) != len(expanded_aug):
                 valid_len = min(len(retro), len(expanded_aug))
                 logging.info(
@@ -560,15 +862,26 @@ class TP_free_Model(object):
                 retro = list(retro[:valid_len])
                 expanded_aug = list(expanded_aug[:valid_len])
                 expanded_owner = list(expanded_owner[:valid_len])
+                expanded_fragments = list(expanded_fragments[:valid_len])
 
             valid_owner = []
             valid_smiles = []
             valid_retro = []
-            for owner_idx, ccs_smi, retro_smi in zip(expanded_owner, expanded_aug, retro):
+            valid_fragments = []
+            for owner_idx, ccs_smi, retro_smi, fragment_key in zip(
+                expanded_owner, expanded_aug, retro, expanded_fragments
+            ):
+                prepared[owner_idx]["fragment_stats"][fragment_key][
+                    "retro_raw_count"
+                ] += 1
                 if self._is_valid_retro(retro_smi):
                     valid_owner.append(owner_idx)
                     valid_smiles.append(ccs_smi)
                     valid_retro.append(retro_smi)
+                    valid_fragments.append(fragment_key)
+                    prepared[owner_idx]["fragment_stats"][fragment_key][
+                        "retro_valid_count"
+                    ] += 1
 
             # --- Forward inference (single batched GPU call) ---
             if len(valid_retro) > 0:
@@ -581,24 +894,53 @@ class TP_free_Model(object):
                 forward_raw = []
             valid_forward = self._align_forward_outputs(forward_raw, len(valid_retro))
 
-            for owner_idx, ccs_smi, retro_smi, forward_smi in zip(
-                valid_owner, valid_smiles, valid_retro, valid_forward
+            for owner_idx, ccs_smi, retro_smi, forward_smi, fragment_key in zip(
+                valid_owner,
+                valid_smiles,
+                valid_retro,
+                valid_forward,
+                valid_fragments,
             ):
                 owner_buckets[owner_idx]['smiles'].append(ccs_smi)
                 owner_buckets[owner_idx]['retro'].append(retro_smi)
                 owner_buckets[owner_idx]['forward'].append(forward_smi)
+                owner_buckets[owner_idx]['fragments'].append(fragment_key)
 
         # --- Phase A: CPU filter per molecule, collect reactions ---
         per_mol_reactions = []
         for owner_idx, item in enumerate(prepared):
-            target = item['target']
-            bucket = owner_buckets.get(owner_idx, {'smiles': [], 'retro': [], 'forward': []})
-            reactions = self.filter(target, bucket['smiles'], bucket['retro'], bucket['forward'])
+            bucket = owner_buckets.get(
+                owner_idx,
+                {'smiles': [], 'retro': [], 'forward': [], 'fragments': []},
+            )
+            reactions = self._filter_with_attribution(
+                bucket['smiles'],
+                bucket['retro'],
+                bucket['forward'],
+                bucket['fragments'],
+            )
+            for record in reactions:
+                item["fragment_stats"][record["fragment"]][
+                    "forward_consistent_count"
+                ] += 1
             per_mol_reactions.append(reactions)
 
         # --- Phase B: Single mapper call across ALL molecules ---
-        flat_rxns = [rxn for reactions in per_mol_reactions for _, rxn in reactions]
-        flat_ccs = [ccs for reactions in per_mol_reactions for ccs, _ in reactions]
+        flat_rxns = [
+            record["reaction"]
+            for reactions in per_mol_reactions
+            for record in reactions
+        ]
+        flat_ccs = [
+            record["ccs"]
+            for reactions in per_mol_reactions
+            for record in reactions
+        ]
+        flat_reaction_fragments = [
+            record["fragment"]
+            for reactions in per_mol_reactions
+            for record in reactions
+        ]
         mol_offsets = []
         offset = 0
         for reactions in per_mol_reactions:
@@ -624,17 +966,40 @@ class TP_free_Model(object):
             end = mol_offsets[owner_idx + 1]
 
             ccs_slice = flat_ccs[start:end]
+            fragment_slice = flat_reaction_fragments[start:end]
             mapped_slice = mapped_all[start:end] if mapped_all else []
 
+            for fragment_key, mapped_reaction in zip(
+                fragment_slice, mapped_slice
+            ):
+                if mapped_reaction is not None:
+                    item["fragment_stats"][fragment_key]["mapped_count"] += 1
+
             templates = self._extract_templates_from_mapped(ccs_slice, mapped_slice)
+            for fragment_key, _rule in templates:
+                item["fragment_stats"][fragment_key][
+                    "template_extracted_count"
+                ] += 1
 
             if self.use_DICT:
                 _tid = task_ids[owner_idx] if task_ids is not None else None
                 self.renew_DICT(templates, task_id=_tid, target_smiles=target)
 
-            rule_k = [rule for _, rule in templates]
-            sum_rule = (item['dict_rules'] + rule_k) if self.use_DICT else rule_k
-            outputs.append(self._rules_to_result(target, sum_rule))
+            rule_entries = (
+                item['dict_rule_entries'] + templates
+                if self.use_DICT else templates
+            )
+            result = self._rules_to_result_with_sources(target, rule_entries)
+            if result is not None:
+                for reaction, source_fragments in zip(
+                    result["reactants"], result["fragment_sources"]
+                ):
+                    for fragment_key in source_fragments:
+                        item["fragment_stats"][fragment_key][
+                            "full_product_reactions"
+                        ].add(reaction)
+            outputs.append(result)
+            self._write_fragment_yield_telemetry(item, topk)
 
         return outputs
 
