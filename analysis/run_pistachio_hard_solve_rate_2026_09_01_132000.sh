@@ -26,7 +26,7 @@ if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --q
 fi
 code_commit="$(git -C "$repo_root" rev-parse HEAD)"
 started_at="$(date --iso-8601=seconds)"
-printf '{\n  "as_of": "%s",\n  "code_commit": "%s",\n  "iterations": %s,\n  "route_limit": %s,\n  "sampler": "yield8_hybrid",\n  "guardrail_slots": 6\n}\n' \
+printf '{\n  "as_of": "%s",\n  "code_commit": "%s",\n  "iterations": %s,\n  "route_limit": %s,\n  "execution_mode": "serial",\n  "sampler": "yield8_hybrid",\n  "guardrail_slots": 6\n}\n' \
   "$started_at" "$code_commit" "$iterations" "$route_limit" \
   >"$output_dir/run_manifest_2026_09_01_132000.json"
 
@@ -36,9 +36,9 @@ export TP_FREE_YIELD_GUARDRAIL_SLOTS=6
 export TP_FREE_CSS_STRICT_TOPK=1
 export TP_FREE_EFFECTIVE_CACHE=1
 export TP_FREE_YIELD_MAX_TRIPLES=256
-export TP_FREE_RETRO_BATCH_SIZE=128
-export TP_FREE_FORWARD_BATCH_SIZE=128
-export TP_FREE_MAPPER_BATCH_SIZE=128
+export TP_FREE_RETRO_BATCH_SIZE=512
+export TP_FREE_FORWARD_BATCH_SIZE=512
+export TP_FREE_MAPPER_BATCH_SIZE=256
 export TP_FREE_DICT_DUMP_ON_EXIT=1
 export TP_FREE_FRAGMENT_YIELD_LOG="$output_dir/fragment_yield.jsonl"
 
@@ -59,8 +59,6 @@ fi
   --DICT \
   --test_routes pth_hard \
   "${route_args[@]}" \
-  --multi_pool \
-  --parallel_num 16 \
   --collect_expansion_data \
   --result_folder "$output_dir" \
   >"$output_dir/stdout.log" 2>"$output_dir/stderr.log"
