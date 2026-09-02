@@ -392,7 +392,7 @@ def check_anchor8_contract(model, smi):
 
     random.seed(7)
     output, metadata = select_anchor_fragments(
-        chain, TOPK, lambda fragment: known.get(fragment, set()))
+        chain, TOPK, lambda fragment: known.get(fragment, set()), scoring="yield")
     assert metadata["lost_slot_count"] > 0
     assert 1 <= metadata["replaced_count"] <= 2
     reclaimed = [
@@ -404,13 +404,15 @@ def check_anchor8_contract(model, smi):
 
     random.seed(7)
     _output_margin, margin_meta = select_anchor_fragments(
-        chain, TOPK, lambda fragment: known.get(fragment, set()), margin=99)
+        chain, TOPK, lambda fragment: known.get(fragment, set()),
+        scoring="yield", margin=99)
     assert margin_meta["replaced_count"] == 0
     assert margin_meta["rejected_candidate_count"] > 0
 
     random.seed(7)
     _output_cap, cap_meta = select_anchor_fragments(
-        chain, TOPK, lambda fragment: known.get(fragment, set()), max_replace=1)
+        chain, TOPK, lambda fragment: known.get(fragment, set()),
+        scoring="yield", max_replace=1)
     assert cap_meta["replaced_count"] <= 1
 
     random.seed(11)
@@ -422,8 +424,74 @@ def check_anchor8_contract(model, smi):
     assert first == second and first_meta == second_meta
 
     small, small_meta = select_anchor_fragments("C", TOPK, lambda fragment: set())
-    assert small == ["C"] and small_meta["capacity_limited"] is True
+    assert set(small) == {"C"} and small_meta["capacity_limited"] is True
     print("  anchor8 baseline-anchor and micro-replacement contract OK")
+
+
+def check_anchor8_v2_contract(model):
+    from mlp_retrosyn.css_anchor import select_anchor_fragments, _canonical
+    from mlp_retrosyn.css_effective_yield import (
+        enumerate_effective_yield_candidates,
+    )
+
+    chain = "CCCCCCCCCCCCCCCC"
+    whole = _canonical(chain)
+    random.seed(7)
+    _probe, probe_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: set())
+    kept = {
+        row["smiles"]
+        for row in probe_meta["selected"]
+        if row["families"] == ["anchor_base"]
+    }
+    all_candidates = {
+        record["smiles"]
+        for record in enumerate_effective_yield_candidates(chain)
+    }
+    outside = sorted(all_candidates - kept - {whole})
+    assert len(outside) >= 2
+    known = {fragment: {"shared-1", "shared-2"} for fragment in sorted(kept)[:1]}
+    voter, solo = outside[0], outside[1]
+    known[voter] = {"shared-1", "voter-only"}
+    known[solo] = {"solo-1", "solo-2", "solo-3"}
+
+    random.seed(7)
+    _out_c, consensus_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()))
+    consensus_rows = [
+        row["smiles"]
+        for row in consensus_meta["selected"]
+        if "anchor_reclaim" in row["families"]
+    ]
+    assert voter in consensus_rows and solo not in consensus_rows, consensus_rows
+    assert consensus_meta["scoring"] == "consensus"
+
+    random.seed(7)
+    _out_y, yield_meta = select_anchor_fragments(
+        chain, TOPK, lambda fragment: known.get(fragment, set()), scoring="yield")
+    yield_rows = [
+        row["smiles"]
+        for row in yield_meta["selected"]
+        if "anchor_reclaim" in row["families"]
+    ]
+    assert solo in yield_rows and voter not in yield_rows, yield_rows
+
+    output_mv, meta_mv = select_anchor_fragments(
+        "CCCC", TOPK, lambda fragment: set())
+    assert len(output_mv) == TOPK and len(set(output_mv)) == 1
+    assert meta_mv["capacity_limited"] is True
+    assert meta_mv["multiview_count"] == TOPK - 1
+    assert meta_mv["canonical_unique_count"] == 1
+
+    os.environ["TP_FREE_CSS_SAMPLER"] = "anchor8"
+    sampled, runtime_meta = model._anchor8_sampling("CCCC", TOPK)
+    assert len(sampled) == len(set(sampled)), sampled
+    assert {
+        Chem.MolToSmiles(Chem.MolFromSmiles(form)) for form in sampled
+    } == {"CCCC"}, sampled
+    assert runtime_meta["multiview_count"] == TOPK - 1
+    os.environ.pop("TP_FREE_CSS_SAMPLER", None)
+    print("  anchor8 v2 consensus scoring and multiview contract OK")
 
 
 def check_anchor8_candidate_telemetry(model):
@@ -523,6 +591,7 @@ def main(argv):
     check_strict_baseline_contract(model, targets[-1])
     check_yield8_hybrid_contract(model, targets[-1])
     check_anchor8_contract(model, targets[-1])
+    check_anchor8_v2_contract(model)
     check_anchor8_candidate_telemetry(model)
     check_yield_attribution(model)
     check_run_batch_attribution(model)

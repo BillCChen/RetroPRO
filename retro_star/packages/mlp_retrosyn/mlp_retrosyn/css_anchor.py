@@ -16,9 +16,17 @@ Design rules inherited from the effective-yield campaign post-mortem:
   slot was already wasted as a canonical duplicate.
 - Replacement is scored by reactions the DICT can already replay on the
   current product, never by structural novelty alone, and never exceeds
-  ``max_replace`` slots per call.
+  ``max_replace`` slots per call.  Two profiles exist: ``yield`` (v1: most
+  known reactions) and ``consensus`` (v2 default: most overlap with the
+  reaction union the kept production draw already supports, so reclaimed
+  slots vote on known reactions instead of adding low-support branches).
 - An empty DICT makes every candidate score zero, so the output reduces to
   the production draw with strict canonical backfill.
+- When the candidate pool itself cannot fill ``topk`` unique fragments
+  (small intermediates), ``multiview`` pads the remaining slots with extra
+  random-form views of the largest selected fragments, restoring the
+  production whole-molecule repetition exactly where strict uniqueness
+  would otherwise shrink the model budget.
 
 The module is model agnostic.  ``known_reactions`` is a callback supplied by
 the caller and returns the full-product canonical reactions currently known
@@ -70,6 +78,8 @@ def select_anchor_fragments(
     include_triples=False,
     max_triples=0,
     seed=0,
+    scoring="consensus",
+    multiview=True,
 ):
     """Select fragments as production draw plus bounded micro-replacement.
 
@@ -117,16 +127,25 @@ def select_anchor_fragments(
             include_triples=include_triples,
             max_triples=max_triples,
         )
+        if scoring not in ("consensus", "yield"):
+            raise ValueError("unknown anchor scoring profile: %s" % scoring)
         scored = []
         for record in candidates:
             fragment = record["smiles"]
             if fragment in seen:
                 continue
             reactions = set(known_reactions(fragment) or ())
+            overlap = reactions & known_union
             marginal = reactions - known_union
-            scored.append((len(reactions), len(marginal), fragment, record, reactions))
-        scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
-        for score, marginal_count, fragment, record, reactions in scored:
+            if scoring == "consensus":
+                primary = len(overlap)
+            else:
+                primary = len(reactions)
+            scored.append(
+                (primary, len(reactions), len(marginal), fragment, record, reactions)
+            )
+        scored.sort(key=lambda item: (-item[0], -item[1], item[3]))
+        for score, total_known, marginal_count, fragment, record, reactions in scored:
             if len(replacements) >= budget:
                 break
             if score < margin:
@@ -143,7 +162,8 @@ def select_anchor_fragments(
             replacement_rows.append({
                 "smiles": fragment,
                 "families": sorted(record["families"]) + ["anchor_reclaim"],
-                "known_reaction_count": score,
+                "known_reaction_count": total_known,
+                "consensus_vote_count": score,
                 "marginal_new_reaction_count": marginal_count,
                 "atom_count": len(record["atoms"]),
                 "bond_count": len(record["bonds"]),
@@ -168,9 +188,36 @@ def select_anchor_fragments(
         output_seen.add(canonical)
         output_canonicals.append(canonical)
 
+    multiview_count = 0
+    if multiview and len(output_canonicals) < topk:
+        atom_counts = {}
+        for fragment in output_canonicals:
+            mol = Chem.MolFromSmiles(fragment)
+            atom_counts[fragment] = mol.GetNumAtoms() if mol is not None else 0
+        ranked = sorted(
+            output_canonicals, key=lambda f: (-atom_counts[f], f)
+        )
+        cursor = 0
+        while len(output_canonicals) < topk and ranked:
+            donor = ranked[cursor % len(ranked)]
+            output_canonicals.append(donor)
+            multiview_count += 1
+            cursor += 1
+
     replacement_set = set(replacements)
+    unique_count = len(output_seen)
     selected_rows = []
-    for fragment in output_canonicals:
+    for position, fragment in enumerate(output_canonicals):
+        if position >= unique_count:
+            mol = Chem.MolFromSmiles(fragment)
+            selected_rows.append({
+                "smiles": fragment,
+                "families": ["anchor_multiview"],
+                "known_reaction_count": 0,
+                "atom_count": mol.GetNumAtoms() if mol is not None else 0,
+                "bond_count": mol.GetNumBonds() if mol is not None else 0,
+            })
+            continue
         if fragment in replacement_set:
             row = next(
                 item for item in replacement_rows if item["smiles"] == fragment
@@ -191,7 +238,10 @@ def select_anchor_fragments(
         "sampler": "anchor8",
         "requested_count": topk,
         "selected_count": len(output_canonicals),
-        "capacity_limited": len(output_canonicals) < topk,
+        "canonical_unique_count": len(output_seen),
+        "capacity_limited": len(output_seen) < topk,
+        "scoring": scoring,
+        "multiview_count": multiview_count,
         "production_draw_count": len(draws),
         "base_unique_count": len(kept),
         "lost_slot_count": lost_slots,

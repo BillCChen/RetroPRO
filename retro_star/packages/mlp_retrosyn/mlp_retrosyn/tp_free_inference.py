@@ -240,12 +240,15 @@ class TP_free_Model(object):
             include_triples=os.getenv("TP_FREE_ANCHOR_INCLUDE_TRIPLES", "0") == "1",
             max_triples=int(os.getenv("TP_FREE_ANCHOR_MAX_TRIPLES", "0")),
             seed=int(os.getenv("TP_FREE_ANCHOR_SEED", "0")),
+            scoring=os.getenv("TP_FREE_ANCHOR_SCORING", "consensus"),
+            multiview=os.getenv("TP_FREE_ANCHOR_MULTIVIEW", "1") == "1",
         )
         randomized = []
         for fragment in fragments:
             mol = Chem.MolFromSmiles(fragment)
             if mol is not None:
                 randomized.append(Chem.MolToSmiles(mol, doRandom=True))
+        randomized = list(dict.fromkeys(randomized))
         return randomized, metadata
 
     def random_sampling(self, x, RD_list, topk):

@@ -49,8 +49,10 @@ export TP_FREE_DICT_DUMP_ON_EXIT=1
 export TP_FREE_FRAGMENT_YIELD_LOG="$output_dir/fragment_yield.jsonl"
 export TP_FREE_RETRO_CANDIDATE_LOG="$output_dir/retro_candidates.jsonl"
 if [[ "$sampler" == "anchor8" ]]; then
-  export TP_FREE_ANCHOR_MAX_REPLACE=2
-  export TP_FREE_ANCHOR_MARGIN=1
+  export TP_FREE_ANCHOR_MAX_REPLACE="${TP_FREE_ANCHOR_MAX_REPLACE:-2}"
+  export TP_FREE_ANCHOR_MARGIN="${TP_FREE_ANCHOR_MARGIN:-1}"
+  export TP_FREE_ANCHOR_SCORING="${TP_FREE_ANCHOR_SCORING:-consensus}"
+  export TP_FREE_ANCHOR_MULTIVIEW="${TP_FREE_ANCHOR_MULTIVIEW:-1}"
 fi
 
 route_args=()
