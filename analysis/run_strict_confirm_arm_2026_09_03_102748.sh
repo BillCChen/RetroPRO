@@ -8,6 +8,8 @@ MODE="$1"
 TEST_ROUTES="$2"
 SEED="$3"
 RESULT_DIR="$4"
+ITERATIONS="${5:-1000}"
+ROUTE_LIMIT="${6:-0}"
 
 WT="${RETROPRO_WT:-/lustre1/liuzm/liuzm_chenqx/RetroPRO_strict_confirm}"
 APP="$WT/retro_star"
@@ -36,8 +38,8 @@ if ! git -C "$WT" diff --quiet || ! git -C "$WT" diff --cached --quiet; then
 fi
 code_commit="$(git -C "$WT" rev-parse HEAD)"
 started_at="$(date --iso-8601=seconds)"
-printf '{\n  "as_of": "%s",\n  "code_commit": "%s",\n  "mode": "%s",\n  "test_routes": "%s",\n  "seed": %s,\n  "iterations": 1000,\n  "execution_mode": "serial",\n  "strict_topk": %s,\n  "effective_cache": %s\n}\n' \
-  "$started_at" "$code_commit" "$MODE" "$TEST_ROUTES" "$SEED" \
+printf '{\n  "as_of": "%s",\n  "code_commit": "%s",\n  "mode": "%s",\n  "test_routes": "%s",\n  "seed": %s,\n  "iterations": %s,\n  "route_limit": %s,\n  "execution_mode": "serial",\n  "strict_topk": %s,\n  "effective_cache": %s\n}\n' \
+  "$started_at" "$code_commit" "$MODE" "$TEST_ROUTES" "$SEED" "$ITERATIONS" "$ROUTE_LIMIT" \
   "$([ "$MODE" = strict ] && echo 1 || echo 0)" \
   "$([ "$MODE" = strict ] && echo 1 || echo 0)" \
   >"$RESULT_DIR/run_manifest.json"
@@ -56,6 +58,11 @@ if [[ "$MODE" == "strict" ]]; then
   export TP_FREE_EFFECTIVE_CACHE=1
 fi
 
+route_args=()
+if [[ "$ROUTE_LIMIT" -gt 0 ]]; then
+  route_args=(--route_limit "$ROUTE_LIMIT")
+fi
+
 cd "$APP"
 {
   echo "START $MODE $TEST_ROUTES seed=$SEED $(date --iso-8601=seconds) commit=$code_commit"
@@ -66,10 +73,11 @@ cd "$APP"
 "$PY" retro_plan.py \
   --seed "$SEED" --use_value_fn --expansion_topk 8 \
   --one_step_type template_free --CSS --RD_list "[(7,0),(3,0)]" --DICT \
-  --iterations 1000 --gpu 0 \
+  --iterations "$ITERATIONS" --gpu 0 \
   --test_routes "$TEST_ROUTES" \
   --result_folder "$RESULT_DIR" \
   --collect_expansion_data \
+  "${route_args[@]}" \
   >>"$RESULT_DIR/stdout.log" 2>>"$RESULT_DIR/stderr.log"
 
 echo "END $MODE $TEST_ROUTES seed=$SEED $(date --iso-8601=seconds)" >>"$RESULT_DIR/stdout.log"
