@@ -21,13 +21,13 @@ for mode in nonstrict strict; do
       cat > "$jobfile" <<SB
 #!/bin/bash
 #SBATCH -J ${name}
-#SBATCH -p gpu_l40
+#SBATCH -p gpu_l48
 #SBATCH -N 1
 #SBATCH -o ${OUT}/jobs/${name}_%j.out
 #SBATCH -e ${OUT}/jobs/${name}_%j.err
 #SBATCH --no-requeue
 #SBATCH -A liuzm_g1
-#SBATCH --qos=liuzml40
+#SBATCH --qos=liuzml48
 #SBATCH --gres=gpu:1
 #SBATCH --overcommit
 #SBATCH --mincpus=12
