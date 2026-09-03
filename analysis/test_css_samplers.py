@@ -37,7 +37,7 @@ RDLogger.DisableLog("rdApp.*")
 
 MODES = (
     "random", "paircov", "fullcov", "bondcov", "triplecov", "yield8",
-    "yield8_hybrid", "anchor8",
+    "yield8_hybrid", "anchor8", "cached_strict",
 )
 RD_SINGLE = [(3, 0)]
 TOPK = 8
@@ -567,6 +567,47 @@ def check_anchor8_candidate_telemetry(model):
     print("  anchor8 per-candidate telemetry contract OK")
 
 
+def check_cached_strict_contract(model, smi):
+    from mlp_retrosyn.css_effective_yield import (
+        cached_strict_fragments,
+        enumerate_effective_yield_candidates,
+    )
+
+    candidates = enumerate_effective_yield_candidates(
+        smi, include_triples=False, max_triples=0)
+    assert len(candidates) >= 2, len(candidates)
+    cached_set = {candidates[0]["smiles"], candidates[1]["smiles"]}
+    scores = {candidates[0]["smiles"]: 5, candidates[1]["smiles"]: 9}
+
+    out = cached_strict_fragments(
+        smi, TOPK,
+        is_cached=lambda f: f in cached_set,
+        cache_score=lambda f: scores.get(f, 0),
+        exploration_slots=2,
+    )
+    assert len(out) == TOPK, (len(out), out)
+    assert out[0] == candidates[1]["smiles"], out[:2]
+    assert out[1] == candidates[0]["smiles"], out[:2]
+    assert all(f not in cached_set for f in out[2:]), out
+
+    cold = cached_strict_fragments(
+        smi, TOPK, is_cached=lambda f: False,
+        cache_score=lambda f: 0, exploration_slots=2,
+    )
+    assert len(cold) == TOPK, len(cold)
+    assert len(set(cold)) == len(cold), "duplicate fragments in cold draw"
+
+    os.environ["TP_FREE_CSS_SAMPLER"] = "cached_strict"
+    try:
+        model._dict_ref = {}
+        out2 = model.random_sampling(smi, RD_SINGLE, TOPK)
+        assert 1 <= len(out2) <= TOPK, len(out2)
+        assert all(_connected_and_valid(v) for v in out2), out2
+    finally:
+        os.environ.pop("TP_FREE_CSS_SAMPLER", None)
+    print("  cached_strict contract OK")
+
+
 def collect_targets(argv):
     targets = []
     if len(argv) > 1 and Path(argv[1]).exists():
@@ -592,6 +633,7 @@ def main(argv):
     check_yield8_hybrid_contract(model, targets[-1])
     check_anchor8_contract(model, targets[-1])
     check_anchor8_v2_contract(model)
+    check_cached_strict_contract(model, targets[-1])
     check_anchor8_candidate_telemetry(model)
     check_yield_attribution(model)
     check_run_batch_attribution(model)

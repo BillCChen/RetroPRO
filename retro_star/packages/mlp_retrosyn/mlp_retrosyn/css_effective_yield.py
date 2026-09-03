@@ -181,6 +181,64 @@ def strict_backfill_fragments(
     return selected
 
 
+
+def cached_strict_fragments(
+    smiles,
+    topk,
+    is_cached,
+    cache_score,
+    exploration_slots=2,
+    cell_r=3,
+    guardrail_r=7,
+    exploration_oversample=4,
+):
+    """Cache-first fragment draw over the enumerated candidate pool.
+
+    Cached fragments fill ``topk - exploration_slots`` slots, ranked by
+    cache_score descending then SMILES; the remaining slots go to fresh
+    random draws that are neither cached nor already selected.  With an
+    empty cache the draw degrades to a plain random pool.
+    """
+    if topk < 1:
+        raise ValueError("topk must be positive")
+    if exploration_slots < 0:
+        raise ValueError("exploration_slots must be non-negative")
+    exploration_slots = min(exploration_slots, topk)
+    candidates = enumerate_effective_yield_candidates(
+        smiles,
+        cell_r=cell_r,
+        guardrail_r=guardrail_r,
+        include_triples=False,
+        max_triples=0,
+    )
+    cached = [record["smiles"] for record in candidates
+              if is_cached(record["smiles"])]
+    cached.sort(key=lambda fragment: (-cache_score(fragment), fragment))
+    cached_budget = topk - exploration_slots
+    selected = list(dict.fromkeys(cached[:cached_budget]))
+    seen = set(selected)
+    need = topk - len(selected)
+    fresh = []
+    if need > 0:
+        from .tp_free_tools import random_substructure
+        draws = random_substructure(
+            smiles, r=cell_r, d=0,
+            num=max(need, exploration_slots) * exploration_oversample,
+        )
+        for fragment in draws:
+            mol = Chem.MolFromSmiles(fragment)
+            if mol is None:
+                continue
+            canonical = Chem.MolToSmiles(mol, canonical=True,
+                                         isomericSmiles=True)
+            if canonical in seen or is_cached(canonical):
+                continue
+            seen.add(canonical)
+            fresh.append(canonical)
+            if len(fresh) == need:
+                break
+    return selected + fresh
+
 def _family_label(record):
     for family in FAMILY_ORDER:
         if family in record["families"]:

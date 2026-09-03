@@ -18,6 +18,7 @@ PY=/home/liuzm/liuzm_chenqx/.conda/envs/retropro/bin/python
 case "$MODE" in
   nonstrict) ;;
   strict) ;;
+  cached_strict) ;;
   *) echo "unknown mode: $MODE" >&2; exit 2 ;;
 esac
 case "$TEST_ROUTES" in
@@ -56,6 +57,10 @@ export TP_FREE_RETRO_CANDIDATE_LOG="$RESULT_DIR/retro_candidates.jsonl"
 if [[ "$MODE" == "strict" ]]; then
   export TP_FREE_CSS_STRICT_TOPK=1
   export TP_FREE_EFFECTIVE_CACHE=1
+fi
+if [[ "$MODE" == "cached_strict" ]]; then
+  export TP_FREE_CSS_SAMPLER=cached_strict
+  export TP_FREE_CACHED_STRICT_EXPLORATION=2
 fi
 
 route_args=()

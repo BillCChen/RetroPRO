@@ -32,6 +32,7 @@ from .tp_free_tools import random_substructure, rand_aug_smiles, repeat_retro_k
 from .css_hierarchical import (paircov_large_fragments, fullcov_fragments,
                                    bondcov_large_fragments, triplecov_large_fragments)
 from .css_effective_yield import (
+    cached_strict_fragments,
     select_effective_yield_fragments,
     strict_backfill_fragments,
 )
@@ -251,6 +252,41 @@ class TP_free_Model(object):
         randomized = list(dict.fromkeys(randomized))
         return randomized, metadata
 
+    def _cached_strict_sampling(self, x, topk):
+        dict_ref = getattr(self, "_dict_ref", {})
+        hit_counts = getattr(self, "_global_substructure_hit_counts", {})
+
+        def is_cached(fragment):
+            return self.smi2cano_smiels(fragment) in dict_ref
+
+        def cache_score(fragment):
+            return hit_counts.get(self.smi2cano_smiels(fragment), 0)
+
+        fragments = cached_strict_fragments(
+            x,
+            int(topk),
+            is_cached,
+            cache_score,
+            exploration_slots=int(
+                os.getenv("TP_FREE_CACHED_STRICT_EXPLORATION", "2")),
+            cell_r=int(os.getenv("TP_FREE_CACHED_STRICT_CELL_R", "3")),
+            guardrail_r=int(
+                os.getenv("TP_FREE_CACHED_STRICT_GUARDRAIL_R", "7")),
+        )
+        metadata = {
+            "sampler": "cached_strict",
+            "selected_count": len(fragments),
+            "requested_count": int(topk),
+            "cached_count": sum(1 for f in fragments if is_cached(f)),
+        }
+        randomized = []
+        for fragment in fragments:
+            mol = Chem.MolFromSmiles(fragment)
+            if mol is not None:
+                randomized.append(Chem.MolToSmiles(mol, doRandom=True))
+        randomized = list(dict.fromkeys(randomized))
+        return randomized, metadata
+
     def random_sampling(self, x, RD_list, topk):
         output = set()
         rd_size = max(len(RD_list), 1)
@@ -264,6 +300,9 @@ class TP_free_Model(object):
             return output
         if sampler == "anchor8":
             output, _metadata = self._anchor8_sampling(x, topk)
+            return output
+        if sampler == "cached_strict":
+            output, _metadata = self._cached_strict_sampling(x, topk)
             return output
         for R, D in RD_list:
             if self.use_CCS:
